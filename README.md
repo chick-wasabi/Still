@@ -7,7 +7,7 @@ A private React/Vite workspace with an illustrated forest lock screen, warm ambi
 Requires Node.js 20.19+ or 22.12+ and npm.
 
 ```sh
-npm ci --legacy-peer-deps --cache /tmp/still-npm-cache
+npm ci
 npm run dev
 npm run build
 npm run preview
@@ -17,6 +17,8 @@ npm run format:check
 ```
 
 Deploy `dist/` to a static host using HTTPS. There is no backend, email integration, account service, or cloud synchronization. End-to-end tests use `/usr/bin/chromium` if installed; otherwise run `npx playwright install chromium` or set `CHROMIUM_PATH`.
+
+For Vercel, use the **Vite** framework preset, the default npm install command, `npm run build` as the build command, and `dist` as the output directory. No peer-dependency bypass flags are needed.
 
 ## A space for each part of life
 
@@ -82,7 +84,7 @@ On a fine pointer, a beveled 3D arrow (or text caret over writing fields) replac
 
 Dialogs, open menus/mobile navigation, hidden tabs, locking, and pause suspend the renderer/physics and restore the native pointer. Reduced motion gives the cat a static resting pose and freezes physics; custom-cursor emulation is disabled. WebGL 2 failure or context loss restores the normal workspace and offers a retry. The 3D code and bundled Rapier/WASM payload load separately from the HTML workspace; no remote asset service is required. DPR is bounded and adapts to sustained frame cost. Observers, pointer capture, native-cursor styles, geometries, materials, skeletons, and physics resources are cleaned up when the companion unmounts. Frame rate still depends on the device/GPU; no universal 60 fps guarantee is made.
 
-`framer-motion-3d` remains installed as requested, but its published peer requirements target Fiber 8/React 18. This implementation uses Three.js skeletal animation and Fiber 9/React 19 directly; it does not import that deprecated package. Install the requested dependency set with `--legacy-peer-deps` as shown above.
+The 3D companion uses Three.js skeletal animation and Fiber 9/React 19 directly. The unused, deprecated `framer-motion-3d` package is excluded because its peer requirements target Fiber 8/React 18. Framer Motion remains installed for the HTML interface.
 
 ## Architecture
 
