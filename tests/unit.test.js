@@ -201,3 +201,53 @@ test('companion selects a free part of a partially obstructed ledge', async () =
   assert.ok(point.x > 440);
   assert.ok(safePoint(point, obstacles, viewport));
 });
+
+test('weighted pet decisions respect environment guards, fatigue, and recent behavior', async () => {
+  const { chooseBehavior } = await import('../src/lib/motion/behavior.js');
+  const environment = {
+    energy: 0.9,
+    previous: 'wander',
+    wide: false,
+    collections: false,
+    buttons: false,
+    near: false,
+  };
+  const sample = Array.from({ length: 1000 }, (_, i) =>
+    chooseBehavior(environment, () => i / 1000),
+  );
+  for (const impossible of ['wander', 'playing', 'scratching', 'batting', 'climbing'])
+    assert.ok(!sample.includes(impossible));
+  assert.ok(sample.includes('stalking'));
+  const naps = (energy) =>
+    Array.from({ length: 1000 }, (_, i) =>
+      chooseBehavior({ ...environment, energy }, () => i / 1000),
+    ).filter((s) => s === 'sleeping').length;
+  assert.ok(naps(0.1) > naps(0.9) * 3, 'tired cats should be substantially more likely to nap');
+  const full = { ...environment, previous: '', wide: true, collections: true, buttons: true };
+  assert.equal(
+    new Set(Array.from({ length: 1000 }, (_, i) => chooseBehavior(full, () => i / 1000))).size,
+    10,
+  );
+});
+
+test('surface routes lock feet to top pixels and jump across gaps rather than walking on air', async () => {
+  const { surfaceRoute } = await import('../src/lib/motion/behavior.js');
+  const { surfacePoint, safePoint, jumpPoint } = await import('../src/lib/motion/geometry.js');
+  const viewport = { width: 1000, height: 700 };
+  const left = { left: 50, right: 300, top: 300 },
+    right = { left: 600, right: 900, top: 300 };
+  const from = surfacePoint(left);
+  assert.equal(from.y, left.top);
+  const route = surfaceRoute(from, left, right, [left, right], [], viewport);
+  assert.ok(route?.length);
+  assert.ok(route[0].arc, 'different surfaces require a jump even at matching heights');
+  assert.equal(route.at(-1).point.y, right.top);
+  const wall = [{ left: 400, right: 500, top: 0, bottom: 700 }];
+  assert.equal(surfaceRoute(from, left, right, [left, right], wall, viewport), null);
+  const walk = surfaceRoute(from, left, left, [left], [], viewport, 0.9);
+  assert.equal(walk[0].arc, null);
+  for (let i = 0; i <= 100; i++)
+    assert.ok(
+      safePoint(jumpPoint(from, route[0].point, route[0].arc.height, i / 100), [], viewport),
+    );
+});

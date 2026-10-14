@@ -10,7 +10,7 @@ export function surfacePoint(surface, fraction = 0.5) {
       CAT.width / 2 +
       CAT.margin +
       Math.max(0, surface.right - surface.left - CAT.width - CAT.margin * 2) * fraction,
-    y: surface.top - 2,
+    y: surface.top,
   };
 }
 

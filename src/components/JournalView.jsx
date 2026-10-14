@@ -50,7 +50,7 @@ export default function JournalView({
           </button>
         )}
       </div>
-      <div className="journal-heading">
+      <div className="journal-heading" data-cat-surface="header">
         <div>
           <h2>
             {folder

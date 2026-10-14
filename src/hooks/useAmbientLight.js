@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
+import useReducedMotion from './useReducedMotion';
 
 export default function useAmbientLight(root, enabled) {
+  const reduced = useReducedMotion();
   useEffect(() => {
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)');
     const pointer = matchMedia('(hover: hover) and (pointer: fine)');
     let frame = 0,
       last = 0,
@@ -13,7 +14,7 @@ export default function useAmbientLight(root, enabled) {
     const layers = [...root.current.querySelectorAll('[data-parallax]')];
     function tick(time) {
       frame = 0;
-      if (document.hidden || reduced.matches || !enabled) return;
+      if (document.hidden || reduced || !enabled) return;
       const delta = last ? Math.min((time - last) / 1000, 0.04) : 1 / 60;
       last = time;
       const smoothing = 1 - Math.exp(-delta * 7);
@@ -27,7 +28,7 @@ export default function useAmbientLight(root, enabled) {
         frame = requestAnimationFrame(tick);
     }
     function move(event) {
-      if (!pointer.matches || reduced.matches || !enabled) return;
+      if (!pointer.matches || reduced || !enabled) return;
       targetX = (event.clientX / innerWidth) * 2 - 1;
       targetY = (event.clientY / innerHeight) * 2 - 1;
       if (!frame) {
@@ -41,20 +42,18 @@ export default function useAmbientLight(root, enabled) {
       cancelAnimationFrame(frame);
       frame = 0;
       last = 0;
-      if (!document.hidden && enabled && !reduced.matches) frame = requestAnimationFrame(tick);
+      if (!document.hidden && enabled && !reduced) frame = requestAnimationFrame(tick);
       else layers.forEach((layer) => layer.style.removeProperty('transform'));
     }
     window.addEventListener('pointermove', move, { passive: true });
     document.documentElement.addEventListener('pointerleave', reset);
     document.addEventListener('visibilitychange', reset);
-    reduced.addEventListener('change', reset);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener('pointermove', move);
       document.documentElement.removeEventListener('pointerleave', reset);
       document.removeEventListener('visibilitychange', reset);
-      reduced.removeEventListener('change', reset);
       layers.forEach((layer) => layer.style.removeProperty('transform'));
     };
-  }, [enabled, root]);
+  }, [enabled, root, reduced]);
 }

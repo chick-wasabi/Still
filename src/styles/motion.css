@@ -653,3 +653,243 @@
 [data-behavior='climbing'][data-climb-direction='up'] .companion-rig {
   transform: rotate(-90deg);
 }
+
+/* Desktop pet: each pose stays independent from its viewport transform. */
+.companion-facing {
+  top: 6.125px;
+}
+.companion-rig {
+  transform-origin: 50% 49.875px;
+}
+.companion-gaze {
+  transform: translate3d(var(--cat-look-x, 0px), var(--cat-look-y, 0px), 0);
+  transition: transform 140ms ease-out;
+}
+.cat-awake-eyes {
+  transform: translate3d(
+    calc(var(--cat-look-x, 0px) * 0.35),
+    calc(var(--cat-look-y, 0px) * 0.35),
+    0
+  );
+}
+[data-behavior='idle'] .companion-rig {
+  animation: pet-idle-breath 2.8s ease-in-out infinite alternate;
+}
+:is([data-behavior='prowling'], [data-behavior='carrying'], [data-behavior='stalk-running'])
+  .companion-leg {
+  animation: companion-stride 0.32s ease-in-out infinite alternate;
+}
+:is([data-behavior='prowling'], [data-behavior='carrying'], [data-behavior='stalk-running']) .rear {
+  animation-delay: -0.32s;
+}
+[data-behavior='prowling'] .companion-rig {
+  animation: pet-prowl 0.64s ease-in-out infinite alternate;
+}
+[data-behavior='stalk-running'] .companion-leg {
+  animation-duration: 0.18s;
+}
+[data-behavior='stalk-running'] .companion-rig {
+  transform: scale(1.03, 0.85);
+}
+:is([data-behavior='stalking'], [data-behavior='pounce-ready']) .companion-rig {
+  transform: scale(1.06, 0.7);
+}
+:is([data-behavior='stalking'], [data-behavior='pounce-ready']) .companion-tail {
+  animation: pet-tail-flick 0.28s ease-in-out infinite alternate;
+}
+.companion-ears {
+  transform-origin: 61px 24px;
+}
+:is([data-behavior='stalking'], [data-behavior='pounce-ready']) .companion-ears {
+  animation: pet-ear-wiggle 0.22s ease-in-out infinite alternate;
+}
+:is([data-behavior='pouncing'], [data-behavior='startled']) .companion-rig {
+  transform: scale(0.94, 1.04) rotate(-5deg);
+}
+:is([data-behavior='pouncing'], [data-behavior='startled']) .companion-leg {
+  transform: rotate(-24deg);
+}
+:is([data-behavior='pouncing'], [data-behavior='startled']) .cat-shadow {
+  opacity: 0;
+}
+[data-behavior='grabbing'] .companion-rig {
+  transform: scale(1.05, 0.87);
+}
+:is([data-behavior='grabbing'], [data-behavior='carrying'], [data-behavior='batting']) .front {
+  animation: pet-grab 0.4s ease-in-out infinite alternate;
+}
+[data-behavior='carrying'] .companion-head {
+  transform: rotate(8deg);
+}
+[data-behavior='stretching'] .companion-rig {
+  animation: pet-stretch 2s ease-in-out infinite;
+}
+[data-behavior='stretching'] .companion-tail {
+  transform: rotate(-22deg);
+  animation: none;
+}
+[data-behavior='tail-flick'] .companion-tail {
+  animation: pet-tail-flick 0.2s ease-in-out 5 alternate;
+}
+[data-behavior='sleeping'] .companion-rig {
+  transform: scaleY(0.85);
+  animation: pet-sleep 3.6s ease-in-out infinite alternate;
+}
+[data-behavior='sleeping'] .cat-body {
+  transform: translateY(7px);
+}
+[data-behavior='sleeping'] .companion-leg {
+  opacity: 0;
+}
+[data-cat-scratched='true'] {
+  animation: pet-pixel-scratch 0.18s steps(2, end) infinite alternate;
+}
+.cat-chirp {
+  display: none;
+  position: absolute;
+  top: -23px;
+  right: -14px;
+  padding: 3px 8px;
+  border-radius: 9px 9px 9px 0;
+  background: var(--space-button);
+  color: #faf3df;
+  font-size: 12px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.cat-chirp i {
+  font-style: normal;
+  color: var(--space-highlight);
+}
+[data-chirping='true'] .cat-chirp {
+  display: block;
+  animation: pet-chirp 0.75s ease-out both;
+}
+.cat-cursor-toy {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 27px;
+  pointer-events: none;
+  transform-origin: 2px 2px;
+  will-change: transform;
+}
+.cat-cursor-toy[hidden] {
+  display: none;
+}
+.cursor-spark {
+  position: absolute;
+  left: -9px;
+  top: -10px;
+  color: var(--space-highlight);
+  font-size: 13px;
+  animation: pet-cursor-spark 0.6s ease-in-out infinite alternate;
+}
+html[data-cat-cursor-hidden='true'],
+html[data-cat-cursor-hidden='true'] * {
+  cursor: none !important;
+}
+@keyframes pet-idle-breath {
+  from {
+    transform: scaleY(1);
+  }
+  to {
+    transform: scaleY(1.025);
+  }
+}
+@keyframes pet-prowl {
+  from {
+    transform: scaleY(0.97);
+  }
+  to {
+    transform: scaleY(1.015);
+  }
+}
+@keyframes pet-sleep {
+  from {
+    transform: scaleY(0.85);
+  }
+  to {
+    transform: scaleY(0.87);
+  }
+}
+@keyframes pet-tail-flick {
+  from {
+    transform: rotate(-22deg);
+  }
+  to {
+    transform: rotate(23deg);
+  }
+}
+@keyframes pet-ear-wiggle {
+  from {
+    transform: rotate(-4deg);
+  }
+  to {
+    transform: rotate(5deg);
+  }
+}
+@keyframes pet-grab {
+  from {
+    transform: rotate(-32deg);
+  }
+  to {
+    transform: rotate(-68deg);
+  }
+}
+@keyframes pet-stretch {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40%,
+  65% {
+    transform: scale(1.09, 0.77);
+  }
+}
+@keyframes pet-pixel-scratch {
+  from {
+    transform: translate3d(-1px, 0, 0) skewX(-2deg);
+  }
+  to {
+    transform: translate3d(1px, -0.5px, 0) skewX(2deg);
+  }
+}
+@keyframes pet-chirp {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0) scale(0.85);
+  }
+  25%,
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+  }
+}
+@keyframes pet-cursor-spark {
+  from {
+    opacity: 0.4;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .companion-gaze {
+    transition: none;
+  }
+  .cat-cursor-toy {
+    display: none !important;
+  }
+  html[data-cat-cursor-hidden='true'],
+  html[data-cat-cursor-hidden='true'] * {
+    cursor: auto !important;
+  }
+}

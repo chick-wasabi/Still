@@ -31,15 +31,19 @@ export default memo(function CalendarCat({ enabled = true, suspended = false, la
         hidden
         className="cat-companion"
         aria-label="Pet the cat companion"
-        title="A little company. Click to pet."
+        title="A curious little companion. Click to pet; move your mouse to end cursor play."
         data-behavior="idle"
         data-facing="right"
       >
         <span className="cat-shadow" />
+        <span className="cat-chirp" aria-hidden="true">
+          prrt! <i>♪</i>
+        </span>
         <span className="companion-facing">
           <svg
             className="companion-rig"
             viewBox="0 0 80 64"
+            preserveAspectRatio="none"
             width="68"
             height="56"
             aria-hidden="true"
@@ -62,31 +66,37 @@ export default memo(function CalendarCat({ enabled = true, suspended = false, la
                 d="M51 36Q49 49 54 57L61 57L59 37"
                 fill="#d7b58b"
               />
-              <g className="companion-head">
-                <path d="M48 23L47 7L60 15L69 6L74 26" fill="#d7b58b" />
-                <path d="M51 19L50 12L56 17M65 16L69 11L70 20" fill="#c78681" />
-                <ellipse cx="61" cy="27" rx="15" ry="14" fill="#d7b58b" />
-                <path d="M54 35Q63 39 72 33" fill="#efd8b9" />
-                <g className="cat-awake-eyes" fill="#38433b">
-                  <ellipse cx="58" cy="26" rx="1.7" ry="2.3" />
-                  <ellipse cx="69" cy="25" rx="1.7" ry="2.3" />
+              <g className="companion-gaze">
+                <g className="companion-head">
+                  <path
+                    className="companion-ears"
+                    d="M48 23L47 7L60 15L69 6L74 26"
+                    fill="#d7b58b"
+                  />
+                  <path d="M51 19L50 12L56 17M65 16L69 11L70 20" fill="#c78681" />
+                  <ellipse cx="61" cy="27" rx="15" ry="14" fill="#d7b58b" />
+                  <path d="M54 35Q63 39 72 33" fill="#efd8b9" />
+                  <g className="cat-awake-eyes" fill="#38433b">
+                    <ellipse cx="58" cy="26" rx="1.7" ry="2.3" />
+                    <ellipse cx="69" cy="25" rx="1.7" ry="2.3" />
+                  </g>
+                  <g className="cat-sleep-eyes" stroke="#52604d" strokeWidth="1.7" fill="none">
+                    <path d="M54 27Q58 30 61 26M65 26Q68 29 72 25" />
+                  </g>
+                  <path d="M64 30L68 30L66 33Z" fill="#a87874" />
+                  <path
+                    d="M66 33L66 35M70 33L78 31M70 35L79 36M61 34L53 33"
+                    stroke="#715d4f"
+                    strokeWidth=".8"
+                    fill="none"
+                  />
+                  <path
+                    d="M50 21L55 19M48 25L53 23M32 29L30 34M38 26L37 32M44 27L43 32"
+                    stroke="#b28a62"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
                 </g>
-                <g className="cat-sleep-eyes" stroke="#52604d" strokeWidth="1.7" fill="none">
-                  <path d="M54 27Q58 30 61 26M65 26Q68 29 72 25" />
-                </g>
-                <path d="M64 30L68 30L66 33Z" fill="#a87874" />
-                <path
-                  d="M66 33L66 35M70 33L78 31M70 35L79 36M61 34L53 33"
-                  stroke="#715d4f"
-                  strokeWidth=".8"
-                  fill="none"
-                />
-                <path
-                  d="M50 21L55 19M48 25L53 23M32 29L30 34M38 26L37 32M44 27L43 32"
-                  stroke="#b28a62"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
               </g>
             </g>
           </svg>
@@ -110,6 +120,18 @@ export default memo(function CalendarCat({ enabled = true, suspended = false, la
           </svg>
         </span>
       </button>
+      <span className="cat-cursor-toy" aria-hidden="true" hidden>
+        <svg width="22" height="27" viewBox="0 0 22 27" fill="none">
+          <path
+            d="M2 2L3 21L8 16L12 25L16 23L12 14L20 14L2 2Z"
+            fill="#faf3df"
+            stroke="#38433b"
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="cursor-spark">✦</span>
+      </span>
     </div>,
     document.body,
   );
