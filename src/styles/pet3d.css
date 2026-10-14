@@ -1,0 +1,94 @@
+/* The renderer never consumes HTML pointer events; only raycast hits initiate a drag. */
+.pet3d-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  pointer-events: none;
+  overflow: hidden;
+  contain: layout style;
+}
+.pet3d-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.pet3d-canvas canvas {
+  display: block;
+  background: transparent;
+  pointer-events: none !important;
+}
+.pet3d-controls {
+  position: absolute;
+  bottom: 94px;
+  right: 24px;
+  display: flex;
+  gap: 5px;
+  padding: 5px;
+  border: 1px solid #a9c4bf20;
+  border-radius: 30px;
+  background: #111e27e8;
+  box-shadow: 0 4px 20px #0003;
+  pointer-events: auto;
+}
+.pet3d-control {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #c3d0cf;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.pet3d-control:hover {
+  color: #f4e8c9;
+  background: #819f8c26;
+}
+.pet3d-control:focus-visible {
+  outline: 2px solid var(--space-highlight, #ddcc9e);
+  outline-offset: 3px;
+}
+.pet3d-control:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pet3d-unavailable {
+  position: absolute;
+  right: 24px;
+  bottom: 94px;
+  max-width: min(360px, calc(100vw - 40px));
+  padding: 12px 15px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #15232aee;
+  border: 1px solid #97b9ad30;
+  border-radius: 14px;
+  color: #bacbc8;
+  font-size: 14px;
+  pointer-events: auto;
+}
+.pet3d-unavailable button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #e6d5a2;
+  border: 0;
+  padding: 6px;
+  background: none;
+  cursor: pointer;
+}
+html[data-pet-cursor='true'],
+html[data-pet-cursor='true'] * {
+  cursor: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet3d-control {
+    transition: none;
+  }
+}

@@ -1,5 +1,5 @@
 import useReducedMotion from './hooks/useReducedMotion';
-import CalendarCat from './components/CalendarCat';
+import PetCompanion from './components/pet3d/PetCompanion';
 import useMotionPreferences from './hooks/useMotionPreferences';
 import SanctuaryScene from './components/SanctuaryScene';
 import React, { useCallback, useEffect, useMemo, useState, useLayoutEffect } from 'react';
@@ -306,7 +306,7 @@ function Workspace({ workspace }) {
             <Plus size={17} />
           </button>
         </div>
-        <CalendarCat
+        <PetCompanion
           enabled={catEnabled}
           suspended={Boolean(editor || settings || search)}
           layoutKey={`${workspace.activeSpaceId}-${view}-${collapsed}`}

@@ -148,106 +148,130 @@ test('local recovery never stores the answer, rejects incorrect answers and decr
   );
 });
 
-test('companion jumps follow a parabolic trajectory and clear solid panels', async () => {
-  const { jumpPoint, planJump, safePoint } = await import('../src/lib/motion/geometry.js');
-  const from = { x: 100, y: 300 },
-    to = { x: 600, y: 220 };
-  const obstacles = [{ left: 290, right: 410, top: 250, bottom: 550 }];
-  const viewport = { width: 800, height: 600 };
-  const plan = planJump(from, to, obstacles, viewport);
-  assert.ok(plan, 'a safe arc should exist');
-  assert.deepEqual(jumpPoint(from, to, plan.height, 0), from);
-  assert.deepEqual(jumpPoint(from, to, plan.height, 1), to);
-  for (let step = 0; step <= 200; step++)
-    assert.ok(safePoint(jumpPoint(from, to, plan.height, step / 200), obstacles, viewport));
-  const y0 = jumpPoint(from, to, plan.height, 0.4).y,
-    y1 = jumpPoint(from, to, plan.height, 0.5).y,
-    y2 = jumpPoint(from, to, plan.height, 0.6).y;
-  assert.ok(y2 - 2 * y1 + y0 > 0, 'vertical acceleration should point downward');
+test('3D viewport mapping round-trips across desktop and mobile sizes', async () => {
+  const { screenToWorld, worldToScreen } = await import('../src/lib/pet3d/math.js');
+  for (const view of [
+    { width: 1600, height: 1000, unit: 78 },
+    { width: 390, height: 844, unit: 64 },
+  ]) {
+    for (const [x, y] of [
+      [0, 0],
+      [view.width, view.height],
+      [123, 456],
+    ]) {
+      const p = screenToWorld(x, y, view),
+        screen = worldToScreen(p.x, p.y, view);
+      assert.ok(Math.abs(screen.x - x) < 1e-9);
+      assert.ok(Math.abs(screen.y - y) < 1e-9);
+    }
+  }
 });
-
-test('companion rejects clipped perches and impossible routes', async () => {
-  const { visibleSurface, planJump } = await import('../src/lib/motion/geometry.js');
-  const viewport = { width: 800, height: 600 };
-  assert.equal(visibleSurface({ left: 20, right: 70, top: 100, bottom: 130 }, viewport), null);
-  assert.equal(visibleSurface({ left: 20, right: 220, top: 25, bottom: 70 }, viewport), null);
-  assert.equal(
-    visibleSurface({ left: 20, right: 220, top: 120, bottom: 150 }, viewport, {
-      left: 0,
-      right: 300,
-      top: 130,
-      bottom: 250,
-    }),
-    null,
-  );
-  assert.equal(
-    planJump(
-      { x: 100, y: 350 },
-      { x: 650, y: 350 },
-      [{ left: 300, right: 450, top: 0, bottom: 600 }],
-      viewport,
-    ),
-    null,
-  );
+test('ballistic launches obey gravity and arrive at higher and lower surfaces', async () => {
+  const { launchVelocity, ballisticPoint, GRAVITY } = await import('../src/lib/pet3d/math.js');
+  const from = { x: -2, y: 1 };
+  for (const to of [
+    { x: 3, y: 2 },
+    { x: -5, y: -2 },
+  ]) {
+    const v = launchVelocity(from, to, 1.5),
+      end = ballisticPoint(from, v, v.time);
+    assert.ok(Math.abs(end.x - to.x) < 1e-9);
+    assert.ok(Math.abs(end.y - to.y) < 1e-9);
+    const a = ballisticPoint(from, v, 0.2),
+      b = ballisticPoint(from, v, 0.3),
+      c = ballisticPoint(from, v, 0.4);
+    assert.ok(Math.abs(c.y - 2 * b.y + a.y + GRAVITY * 0.01) < 1e-9);
+  }
 });
-
-test('companion selects a free part of a partially obstructed ledge', async () => {
-  const { findPerch, safePoint } = await import('../src/lib/motion/geometry.js');
-  const surface = { left: 80, right: 720, top: 300 };
-  const viewport = { width: 800, height: 600 };
-  const obstacles = [{ left: 100, right: 440, top: 250, bottom: 400 }];
-  const point = findPerch(surface, obstacles, viewport, 0.2);
-  assert.ok(point);
-  assert.ok(point.x > 440);
-  assert.ok(safePoint(point, obstacles, viewport));
-});
-
-test('weighted pet decisions respect environment guards, fatigue, and recent behavior', async () => {
-  const { chooseBehavior } = await import('../src/lib/motion/behavior.js');
-  const environment = {
-    energy: 0.9,
-    previous: 'wander',
-    wide: false,
-    collections: false,
-    buttons: false,
-    near: false,
-  };
-  const sample = Array.from({ length: 1000 }, (_, i) =>
-    chooseBehavior(environment, () => i / 1000),
-  );
-  for (const impossible of ['wander', 'playing', 'scratching', 'batting', 'climbing'])
-    assert.ok(!sample.includes(impossible));
-  assert.ok(sample.includes('stalking'));
-  const naps = (energy) =>
-    Array.from({ length: 1000 }, (_, i) =>
-      chooseBehavior({ ...environment, energy }, () => i / 1000),
-    ).filter((s) => s === 'sleeping').length;
-  assert.ok(naps(0.1) > naps(0.9) * 3, 'tired cats should be substantially more likely to nap');
-  const full = { ...environment, previous: '', wide: true, collections: true, buttons: true };
-  assert.equal(
-    new Set(Array.from({ length: 1000 }, (_, i) => chooseBehavior(full, () => i / 1000))).size,
-    10,
-  );
-});
-
-test('surface routes lock feet to top pixels and jump across gaps rather than walking on air', async () => {
-  const { surfaceRoute } = await import('../src/lib/motion/behavior.js');
-  const { surfacePoint, safePoint, jumpPoint } = await import('../src/lib/motion/geometry.js');
-  const viewport = { width: 1000, height: 700 };
-  const left = { left: 50, right: 300, top: 300 },
-    right = { left: 600, right: 900, top: 300 };
-  const from = surfacePoint(left);
-  assert.equal(from.y, left.top);
-  const route = surfaceRoute(from, left, right, [left, right], [], viewport);
-  assert.ok(route?.length);
-  assert.ok(route[0].arc, 'different surfaces require a jump even at matching heights');
-  assert.equal(route.at(-1).point.y, right.top);
-  const wall = [{ left: 400, right: 500, top: 0, bottom: 700 }];
-  assert.equal(surfaceRoute(from, left, right, [left, right], wall, viewport), null);
-  const walk = surfaceRoute(from, left, left, [left], [], viewport, 0.9);
-  assert.equal(walk[0].arc, null);
+test('3D perches and planned leaps reject clipped bodies and solid obstacles', async () => {
+  const { perch, planLeap, ballisticPoint, clearBody } = await import('../src/lib/pet3d/math.js');
+  const bounds = { width: 18, height: 12 },
+    surface = { left: 1, right: 5, top: 0, bottom: -3 };
+  const p = perch(surface, [surface], bounds);
+  assert.ok(p);
+  const from = { x: -3, y: 0.435 },
+    velocity = planLeap(from, p, [surface], bounds);
+  assert.ok(velocity);
   for (let i = 0; i <= 100; i++)
     assert.ok(
-      safePoint(jumpPoint(from, route[0].point, route[0].arc.height, i / 100), [], viewport),
+      clearBody(ballisticPoint(from, velocity, (i / 100) * velocity.time), [surface], bounds),
     );
+  assert.equal(perch({ left: 1, right: 1.5, top: 6, bottom: 4 }, [], bounds), null);
+  const wall = { left: -1, right: 0, top: 6, bottom: -6 };
+  assert.equal(planLeap(from, p, [surface, wall], bounds), null);
+});
+test('throw velocity uses recent real input, clamps speed, and releases a stopped drag gently', async () => {
+  const { tossVelocity } = await import('../src/lib/pet3d/math.js');
+  assert.deepEqual(tossVelocity([]), { x: 0, y: 0, z: 0 });
+  const fast = tossVelocity([
+    { x: 0, y: 0, t: 0 },
+    { x: 10, y: 10, t: 50 },
+  ]);
+  assert.ok(Math.abs(Math.hypot(fast.x, fast.y) - 18) < 1e-9);
+  assert.deepEqual(
+    tossVelocity([
+      { x: 0, y: 0, t: 0 },
+      { x: 2, y: 3, t: 50 },
+      { x: 2, y: 3, t: 250 },
+    ]),
+    { x: 0, y: 0, z: 0 },
+  );
+});
+test('3D behavior weights respect guards, fatigue, and recent decisions', async () => {
+  const { behavior } = await import('../src/lib/pet3d/math.js');
+  const sample = (energy) =>
+    Array.from({ length: 1000 }, (_, i) =>
+      behavior({ energy, previous: 'walk', ball: false, cursor: false }, () => i / 1000),
+    );
+  for (const forbidden of ['walk', 'hunt', 'stalk']) assert.ok(!sample(1).includes(forbidden));
+  assert.ok(
+    sample(0.1).filter((x) => x === 'sleep').length >
+      sample(1).filter((x) => x === 'sleep').length * 3,
+  );
+});
+test('procedural cat has a bound skeleton, reusable material groups, and distinct skeletal gaits', async () => {
+  const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
+  const model = createCatModel();
+  assert.equal(model.mesh.isSkinnedMesh, true);
+  assert.ok(model.bones.length >= 30);
+  assert.ok(
+    model.mesh.geometry.groups.length <= 7,
+    'parts sharing material should batch into one draw',
+  );
+  const weights = model.mesh.geometry.attributes.skinWeight;
+  for (let i = 0; i < weights.count; i++)
+    assert.ok(
+      Math.abs(weights.getX(i) + weights.getY(i) + weights.getZ(i) + weights.getW(i) - 1) < 1e-7,
+    );
+  for (let i = 0; i < 60; i++) model.update('walk', 0.23, 1 / 60, 1);
+  const walk = model.byName.frontNear.rotation.z;
+  for (let i = 0; i < 60; i++) model.update('run', 0.23, 1 / 60, 5);
+  assert.ok(Math.abs(walk - model.byName.frontNear.rotation.z) > 0.2);
+  for (let i = 0; i < 60; i++) model.update('sleep', 2, 1 / 60);
+  assert.equal(model.byName.eyeL.scale.y, 0.08);
+  assert.ok(Number.isFinite(model.mouthPosition().x));
+  model.dispose();
+});
+test('Rapier applies gravity, lands a CCD rigid body, and rebounds the physics ball', async () => {
+  const R = await import('@dimforge/rapier3d-compat');
+  await R.init();
+  const world = new R.World({ x: 0, y: -14, z: 0 });
+  const floor = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -0.1, 0));
+  world.createCollider(R.ColliderDesc.cuboid(5, 0.1, 1), floor);
+  const cat = world.createRigidBody(
+    R.RigidBodyDesc.dynamic().setTranslation(0, 3, 0).setCcdEnabled(true).lockRotations(),
+  );
+  world.createCollider(R.ColliderDesc.cuboid(0.57, 0.42, 0.27), cat);
+  const ball = world.createRigidBody(
+    R.RigidBodyDesc.dynamic().setTranslation(2, 2, 0).setCcdEnabled(true),
+  );
+  world.createCollider(R.ColliderDesc.ball(0.15).setRestitution(0.8), ball);
+  let rebounded = false;
+  for (let i = 0; i < 150; i++) {
+    world.step();
+    if (i > 20 && ball.linvel().y > 2) rebounded = true;
+  }
+  assert.ok(Math.abs(cat.translation().y - 0.42) < 0.025);
+  assert.equal(rebounded, true);
+  world.free();
 });

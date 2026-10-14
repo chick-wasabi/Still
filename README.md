@@ -1,13 +1,13 @@
 # Still — a personal sanctuary
 
-A private React/Vite workspace with an illustrated forest lock screen, warm ambient light, independent Personal and Work spaces, a journal, an instant notepad for tasks, and a weekly habit grid. Built with Tailwind CSS, Lucide React, and Framer Motion.
+A private React/Vite workspace with an illustrated forest lock screen, warm ambient light, independent Personal and Work spaces, a journal, an instant notepad for tasks, and a weekly habit grid. Built with Tailwind CSS, Lucide React, Framer Motion, React Three Fiber, Three.js, and Rapier.
 
 ## Run and validate
 
 Requires Node.js 20.19+ or 22.12+ and npm.
 
 ```sh
-npm ci --cache /tmp/still-npm-cache
+npm ci --legacy-peer-deps --cache /tmp/still-npm-cache
 npm run dev
 npm run build
 npm run preview
@@ -70,33 +70,40 @@ Personal uses a warm charcoal/forest palette with golden and emerald highlights.
 
 The Journal renders 44 motes across three depth layers (24 visible on small screens), with static soft-focus treatment, brighter glow, and faster floating paths. Cursor movement gently shifts light and depth layers on devices with a precise pointer. Pointer updates are coalesced through a damped animation frame loop and never update React state. Other views use a quieter eight-particle scene. All illustrations are bundled SVGs with no external image/font requests.
 
-The desktop pet lives in a single viewport overlay. Its weighted state machine evaluates visible surfaces, energy, nearby mouse activity, and the previous decision. It randomly chooses wandering, napping (including journal-card perches), stretching, rolling, yarn play, stalking, button batting, collection scratching, and wall climbing. Dwell times vary; there is no behavior cycle or fixed timeline. Fatigue increases the chance of a nap, and immediate decision repeats are suppressed.
+The companion is an original procedural **3D skinned cat**, rendered in a lazy-loaded, transparent React Three Fiber canvas. The old SVG character, sprite styles, and 2D controller have been removed. Its 30-bone skeleton includes an articulated spine, chest, neck, head, jaw, ears, eyes, four jointed legs, and a seven-joint tapered tail. A merged skinned mesh batches its parts into seven materials; it uses no external models, fonts, textures, or environment maps. Procedural surfaces avoid texture downloads and compression overhead entirely.
 
-The engine batches `getBoundingClientRect()` and text-range measurements on layout changes. Feet lock to surface tops; a bounded surface graph combines safe ledge walks with collision-tested ballistic jumps. Full panel/input bodies and actual header/sidebar text rectangles are obstacles. Unsafe, clipped, or unreachable routes are skipped. The planner caches jump edges until geometry changes. Unrelated DOM updates do not interrupt a route or postpone mouse inactivity detection.
+The skeletal pose engine blends breathing/blinking, yoga stretches, belly rolls, curled sleeping/ear twitches, crouching, pouncing, impact landing, wall clinging, and paw batting. Walking uses alternating diagonal steps; sprinting uses an independent gallop, deeper joint flexion, and torso compression/pitch. Animation mutates reused bone/pose arrays inside the renderer loop, without React updates per frame.
 
-After 6–8 seconds of mouse inactivity, the cat crouches, wiggles its ears, and stalks toward the nearest reachable perch. A cursor visual starts at the exact resting pointer and is reeled to its paw, carried toward a random reachable ledge, then tossed away with a little animated “prrt!” chirp. This is a visual in-app game: operating-system coordinates, focus, and click targets never change. Only during the grab/carry illusion is the native cursor temporarily hidden. Mouse movement, typing, scrolling, touch, blur, menus/dialogs, reduced motion, pause, and unmount restore it immediately. Writing fields and held mouse buttons suppress the game. The chirp is visual, without unsolicited audio.
+Rapier owns motion at a fixed 60 Hz with CCD on both the cat and its toy ball. DOM measurements produce invisible solid panel/button colliders, thin header/collection ledges, a sidebar wall, and viewport boundaries. Physics raycasts verify landable surfaces. The planner chooses launch velocity using gravity and rejects obstructed ballistic arcs; animation cannot move a jumping rigid body along a floating timeline. Ground detection samples the body footprint, including panel edges. Layout changes rebuild measured colliders and choose a safe perch. Stochastic decisions depend on fatigue, the previous state, cursor inactivity, and recent ball activity.
 
-Slow mouse movement near an idle cat shifts its head and eyes. Nearby clicks produce a randomly chosen safe startled hop, tail flick, or stretch. Scratch effects temporarily distort text with a composited pixel-step animation and decorative claw marks; text content and stored data are never changed. Click the cat to pet it. The top-bar control pauses/removes or resumes the companion; this non-sensitive preference lives in `still-motion-preferences`. The pet hides while dialogs or menus are open and stops when the workspace locks.
+**Play:** drag the 3D cat or toy ball and release to throw it. Release velocity uses recent pointer samples, is capped, and drops to zero if the drag stops. The cat briefly clings after a sufficiently fast wall impact, then falls under gravity. The always-present physics ball bounces, rolls, and attracts pursuit/pounces/paw impulses. The two small companion controls provide keyboard-accessible **Pet 3D cat** and **Toss toy ball** alternatives. The top-bar control pauses/unmounts the scene and persists that preference in `still-motion-preferences`.
 
-Movement uses one requestAnimationFrame loop writing `translate3d` transforms, without React state updates per frame. Stationary behaviors use timers and CSS vector poses. Cursor tracking is frame-coalesced; only moving layers use `will-change`. Route search is bounded, and geometry reads stay outside movement frames. Timers, observers, listeners, scratch attributes, temporary cursor styles, and animation frames are cleaned up on unmount.
+On a fine pointer, a beveled 3D arrow (or text caret over writing fields) replaces the native pointer while the active scene is over the viewport. After 6–8 idle seconds, the cat approaches the nearest reachable perch, grabs the cursor visual, and holds it at its animated **mouth bone** while it continues autonomous behaviors. It randomly lets go; mouse movement, clicks, or keyboard input immediately break the hold. Real operating-system coordinates and HTML click targets never move. Raycasting consumes pointer events only when picking a cat/ball mesh; the canvas itself has `pointer-events: none`. Touch keeps the native pointer behavior and supports direct pet/ball dragging.
 
-Hidden tabs pause ambience and the companion. Reduced-motion settings disable continuous movement, cursor parallax, and the unlock transition, and leave the cat resting. Dialogs trap focus, make background content inert, restore focus, and support Escape.
+Dialogs, open menus/mobile navigation, hidden tabs, locking, and pause suspend the renderer/physics and restore the native pointer. Reduced motion gives the cat a static resting pose and freezes physics; custom-cursor emulation is disabled. WebGL 2 failure or context loss restores the normal workspace and offers a retry. The 3D code and bundled Rapier/WASM payload load separately from the HTML workspace; no remote asset service is required. DPR is bounded and adapts to sustained frame cost. Observers, pointer capture, native-cursor styles, geometries, materials, skeletons, and physics resources are cleaned up when the companion unmounts. Frame rate still depends on the device/GPU; no universal 60 fps guarantee is made.
+
+`framer-motion-3d` remains installed as requested, but its published peer requirements target Fiber 8/React 18. This implementation uses Three.js skeletal animation and Fiber 9/React 19 directly; it does not import that deprecated package. Install the requested dependency set with `--legacy-peer-deps` as shown above.
 
 ## Architecture
 
 - `src/hooks/useWorkspace.js`: persistence, workspace isolation, PIN lifecycle, recovery, cross-tab protection.
 - `src/lib/vault.js`: AES-GCM, PIN/answer derivation, recovery wrapping, data validation.
 - `src/data.js`: legacy migration, sanctuary normalization, date, folder, task, and streak logic.
-- `src/lib/motion/geometry.js`: pure collision checks, perches, and ballistic trajectories.
-- `src/lib/motion/behavior.js`: weighted decisions and bounded, cached surface routing.
-- `src/lib/motion/companionController.js`: imperative pet lifecycle, reactions, and cursor-game coordination.
-- `src/lib/motion/cursorToy.js`: isolated cursor visual and native-cursor restoration.
+- `src/components/pet3d/PetCompanion.jsx`: global lifecycle, lazy loading, controls, pause, and fallback handling.
+- `src/components/pet3d/PetScene.jsx`: transparent canvas, lights, Rapier world, actors, and 3D cursor.
+- `src/lib/pet3d/catModel.js`: original skinned model and reusable skeletal poses.
+- `src/lib/pet3d/director.js`: stochastic decisions, physical locomotion, ball pursuit, and cursor holding.
+- `src/lib/pet3d/domWorld.js`: batched DOM-to-physics geometry and invalidation.
+- `src/lib/pet3d/input.js`: mesh raycasting, drag capture, velocity sampling, and cursor interaction.
+- `src/lib/pet3d/math.js`: coordinate mapping, collision planning, ballistics, and behavior weights.
+- `src/lib/pet3d/state.js`: shared imperative input state and native-cursor restoration.
 - `src/hooks/useAmbientLight.js`: frame-coalesced cursor lighting without React re-renders.
 - `src/hooks/useMotionPreferences.js`: non-sensitive companion visibility preference.
 - `src/hooks/useToday.js`: midnight/focus rollover for daily tasks and habits.
 - `src/components/`: modular navigation/switcher, journal/calendar/editor, notepad tasks, habits, settings, lock/recovery screen, emoji picker, accessible modal, and error recovery.
 - `src/styles.css`: shared layout and component foundation.
 - `src/styles/sanctuary.css`: nature illustration, lock scene, editor, and notepad foundation.
-- `src/styles/motion.css`: workspace palette tokens, ambient depth layers, companion poses, and motion accessibility.
+- `src/styles/motion.css`: workspace palette tokens, ambient depth layers, and motion accessibility.
+- `src/styles/pet3d.css`: transparent overlay, companion controls, and cursor/fallback styling.
 
-Motion tests cover safe/blocked trajectories, partially obstructed perches, weighted behavior eligibility and fatigue, gap-safe routing, scratch restoration on reachable perches, cursor capture/release and cancellation, head tracking and click reactions, pet/pause persistence, responsive bounds, hidden-tab pausing, cursor transforms, portal theming, and reduced motion. Workspace tests exercise crypto authentication and tamper rejection, local recovery, wrong old PINs, migration, workspace isolation, auto-saved drafts, midnight resets, task drag/state updates, habits, storage failures, responsive layouts, and keyboard/reduced-motion behavior.
+Unit tests cover gravity/ballistics, safe perches, toss velocity, weighted decisions, skeleton/gait construction, and actual Rapier body/ball collisions in addition to workspace/crypto logic. WebGL browser tests exercise real rendered meshes, transparent hit testing, cat tossing/wall clinging, ball dragging, mouth-held cursor release, reduced motion, responsive colliders, persistent pause, context loss, and unsupported-device fallback. They explicitly enable Chromium software WebGL; on constrained CI hosts run `npx playwright test --workers=1`. Workspace tests continue to cover journal/task/habit workflows, recovery, encryption, isolation, migration, and storage failures.
