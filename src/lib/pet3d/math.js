@@ -1,14 +1,20 @@
-export const GRAVITY = 14;
+export const GRAVITY = 26;
+export const PET_UNIT = 28;
+export const BALL_RADIUS = 0.15;
 export const CAT = Object.freeze({ halfWidth: 0.57, halfHeight: 0.42, depth: 0.27 });
 export const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 export const randomRange = (min, max, random = Math.random) => min + random() * (max - min);
 export const choose = (items, random = Math.random) => items[Math.floor(random() * items.length)];
 export const length = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 export function screenToWorld(x, y, view) {
-  return { x: (x - view.width / 2) / view.unit, y: (view.height / 2 - y) / view.unit, z: 0 };
+  return view.document
+    ? { x: x / view.unit, y: -y / view.unit, z: 0 }
+    : { x: (x - view.width / 2) / view.unit, y: (view.height / 2 - y) / view.unit, z: 0 };
 }
 export function worldToScreen(x, y, view) {
-  return { x: x * view.unit + view.width / 2, y: view.height / 2 - y * view.unit };
+  return view.document
+    ? { x: x * view.unit, y: -y * view.unit }
+    : { x: x * view.unit + view.width / 2, y: view.height / 2 - y * view.unit };
 }
 export function launchVelocity(from, to, rise = 1, gravity = GRAVITY) {
   const apex = Math.max(rise, to.y - from.y + 0.35);
@@ -19,11 +25,21 @@ export function launchVelocity(from, to, rise = 1, gravity = GRAVITY) {
 export function ballisticPoint(from, velocity, t, gravity = GRAVITY) {
   return { x: from.x + velocity.x * t, y: from.y + velocity.y * t - (gravity * t * t) / 2 };
 }
+export function worldBounds(bounds) {
+  return {
+    left: bounds.left ?? -bounds.width / 2,
+    right: bounds.right ?? bounds.width / 2,
+    top: bounds.top ?? bounds.height / 2,
+    bottom: bounds.bottom ?? -bounds.height / 2,
+  };
+}
 export function clearBody(point, boxes, bounds) {
+  const edge = worldBounds(bounds);
   if (
-    Math.abs(point.x) + CAT.halfWidth > bounds.width / 2 ||
-    point.y + CAT.halfHeight > bounds.height / 2 ||
-    point.y - CAT.halfHeight < -bounds.height / 2 + 0.06
+    point.x - CAT.halfWidth < edge.left ||
+    point.x + CAT.halfWidth > edge.right ||
+    point.y + CAT.halfHeight > edge.top ||
+    point.y - CAT.halfHeight < edge.bottom + 0.06
   )
     return false;
   return !boxes.some(
@@ -51,7 +67,12 @@ export function perch(surface, boxes, bounds, fraction = 0.5) {
   return null;
 }
 export function planLeap(from, to, boxes, bounds) {
-  for (let rise = Math.max(0.45, to.y - from.y + 0.3); rise < bounds.height; rise += 0.22) {
+  if (Math.abs(to.x - from.x) > 16 || to.y - from.y > 6 || from.y - to.y > 9) return null;
+  for (
+    let rise = Math.max(0.45, to.y - from.y + 0.3);
+    rise < Math.min(bounds.height, 7);
+    rise += 0.22
+  ) {
     const velocity = launchVelocity(from, to, rise);
     if (Math.abs(velocity.x) > 13) continue;
     const samples = Math.max(35, Math.ceil(velocity.time * 90));
@@ -79,7 +100,7 @@ export function tossVelocity(samples, maximum = 18) {
   return { x, y, z: 0 };
 }
 export function behavior(
-  { energy = 1, previous = '', cursor = false, ball = true },
+  { energy = 1, previous = '', cursor = false, ball = true, wall = false, text = false },
   random = Math.random,
 ) {
   const weights = [
@@ -92,6 +113,8 @@ export function behavior(
     ['jump', 1.7],
     ['hunt', ball ? 2.8 : 0],
     ['stalk', cursor ? 2 : 0],
+    ['climb', wall ? 1.3 : 0],
+    ['scratch', text ? 1.6 : 0],
   ];
   const available = weights.filter(([name, weight]) => weight && name !== previous);
   let n = random() * available.reduce((sum, [, w]) => sum + w, 0);

@@ -17,6 +17,8 @@ export function createPetInput() {
     idleDeadline: Infinity,
     pressed: false,
     held: false,
+    carryingBall: false,
+    mouth: { x: 0, y: 0, z: 0 },
     grabAt: 0,
     heldAt: 0,
     drag: null,

@@ -138,6 +138,19 @@ test('idle cursor is held at the skeleton mouth while the cat roams and input in
   await page.waitForTimeout(1700);
   await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'true');
   expect(await layer(page).getAttribute('data-behavior')).not.toBe('grab');
+  const revision = await layer(page).getAttribute('data-world-revision');
+  await page.evaluate(() => scrollTo(0, 180));
+  await page.waitForTimeout(250);
+  await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'true');
+  const attachment = await layer(page).evaluate((e) =>
+    Math.hypot(
+      Number(e.dataset.cursorDocumentX) - Number(e.dataset.mouthDocumentX),
+      Number(e.dataset.cursorDocumentY) - Number(e.dataset.mouthDocumentY),
+    ),
+  );
+  expect(attachment).toBeLessThan(1);
+  await expect(layer(page)).toHaveAttribute('data-world-revision', revision);
+  await page.evaluate(() => scrollTo(0, 0));
   await page.mouse.move(1051, 600);
   await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'false');
   await expect(page.locator('html')).toHaveAttribute('data-pet-cursor', 'true');
@@ -251,7 +264,10 @@ test('the toy ball is directly raycast-draggable and throwing it attracts the ca
       Math.hypot((await position(page, 'ball')).x - p.x, (await position(page, 'ball')).y - p.y),
     )
     .toBeGreaterThan(40);
-  await expect(layer(page)).toHaveAttribute('data-behavior', /hunt|bat|run|jump|crouch|land/);
+  await expect(layer(page)).toHaveAttribute(
+    'data-behavior',
+    /hunt|bat|run|carry|descend|jump|crouch|land/,
+  );
 });
 
 test('autonomous jumps crouch, launch under gravity, and land on a raycast UI surface', async ({
@@ -269,7 +285,7 @@ test('autonomous jumps crouch, launch under gravity, and land on a raycast UI su
     });
     // Choose the jump weight after resources exist, without duplicating Three object IDs at construction.
     window.originalPetRandom = Math.random;
-    Math.random = () => 0.75;
+    Math.random = () => 0.62;
   });
   try {
     await expect
@@ -341,4 +357,77 @@ test('touch users can drag the cat without hijacking ordinary workspace scrollin
   } finally {
     await context.close();
   }
+});
+
+test('miniature cat and ball keep document positions while the canvas scrolls offscreen and returns', async ({
+  page,
+}) => {
+  await ready(page);
+  await page.evaluate(() => {
+    const key = 'still-workspace-v2',
+      saved = JSON.parse(localStorage.getItem(key));
+    saved.data.spaces[0].notes = Array.from({ length: 72 }, (_, i) => ({
+      id: `scroll-note-${i}`,
+      title: `Journal moment ${i}`,
+      body: 'A real document surface below the fold.',
+      date: null,
+      emoji: '',
+      folder: null,
+      mood: '',
+      updatedAt: new Date().toISOString(),
+    }));
+    localStorage.setItem(key, JSON.stringify(saved));
+  });
+  await page.reload();
+  await ready(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(layer(page)).toHaveAttribute('data-reduced', 'true');
+  const snapshot = () =>
+    layer(page).evaluate((root) => ({
+      catX: root.dataset.catDocumentX,
+      catY: root.dataset.catDocumentY,
+      ballX: root.dataset.ballDocumentX,
+      ballY: root.dataset.ballDocumentY,
+      revision: root.dataset.worldRevision,
+      height: Number(root.dataset.standingHeight),
+      layerTop: root.getBoundingClientRect().top,
+      rasterHeight: root.querySelector('.pet3d-canvas').getBoundingClientRect().height,
+      parent: root.parentElement.id,
+      position: getComputedStyle(root).position,
+    }));
+  const before = await snapshot();
+  expect(before.parent).toBe('main-content');
+  expect(before.position).toBe('absolute');
+  expect(before.height).toBeLessThan(44);
+  expect(before.height).toBeGreaterThan(25);
+  expect(before.rasterHeight).toBeLessThanOrEqual(2048);
+  await page.evaluate(() => scrollTo(0, 1800));
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(1500);
+  await page.waitForTimeout(350);
+  const scrolled = await snapshot();
+  expect(scrolled.layerTop).toBeLessThan(before.layerTop - 1500);
+  expect(scrolled.catX).toBe(before.catX);
+  expect(scrolled.catY).toBe(before.catY);
+  expect(scrolled.ballX).toBe(before.ballX);
+  expect(scrolled.ballY).toBe(before.ballY);
+  expect(scrolled.revision).toBe(before.revision);
+  await page.evaluate(() => scrollTo(0, 0));
+  await page.waitForTimeout(350);
+  const back = await snapshot();
+  expect(back.catY).toBe(before.catY);
+  expect(back.layerTop).toBe(before.layerTop);
+});
+
+test('raycasting remains aligned with the tiny kitten after scrolling', async ({ page }) => {
+  await ready(page);
+  await page.evaluate(() => scrollTo(0, 220));
+  await page.waitForTimeout(300);
+  const p = await position(page);
+  await page.mouse.move(p.x, p.y - 3);
+  await page.mouse.down();
+  await expect(layer(page)).toHaveAttribute('data-dragging', 'cat');
+  await page.mouse.move(p.x + 35, p.y - 45, { steps: 8 });
+  await page.mouse.up();
+  await expect(layer(page)).toHaveAttribute('data-dragging', 'none');
+  await expect(layer(page)).toHaveAttribute('data-grounded', 'true', { timeout: 10000 });
 });

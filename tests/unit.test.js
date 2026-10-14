@@ -233,6 +233,7 @@ test('procedural cat has a bound skeleton, reusable material groups, and distinc
   const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
   const model = createCatModel();
   assert.equal(model.mesh.isSkinnedMesh, true);
+  assert.ok(model.standingHeight * 28 < 44, 'standing kitten stays below two body-text lines');
   assert.ok(model.bones.length >= 30);
   assert.ok(
     model.mesh.geometry.groups.length <= 7,
@@ -274,4 +275,191 @@ test('Rapier applies gravity, lands a CCD rigid body, and rebounds the physics b
   assert.ok(Math.abs(cat.translation().y - 0.42) < 0.025);
   assert.equal(rebounded, true);
   world.free();
+});
+
+test('document coordinates stay stable as content grows and a render window scrolls', async () => {
+  const { screenToWorld, worldToScreen, PET_UNIT, clearBody, planLeap } =
+    await import('../src/lib/pet3d/math.js');
+  const view = { width: 1200, height: 900, unit: PET_UNIT, document: true };
+  const point = screenToWorld(550, 420, view);
+  assert.deepEqual(screenToWorld(550, 420, { ...view, height: 24000 }), point);
+  assert.deepEqual(worldToScreen(point.x, point.y, { ...view, height: 24000 }), { x: 550, y: 420 });
+  const bounds = { left: 0, right: 40, top: 0, bottom: -800, width: 40, height: 800 };
+  assert.equal(clearBody({ x: 20, y: -700 }, [], bounds), true);
+  assert.equal(clearBody({ x: -1, y: -700 }, [], bounds), false);
+  assert.equal(
+    planLeap({ x: 20, y: -700 }, { x: 20, y: -680 }, [], bounds),
+    null,
+    'tiny kitten cannot float up a 560px jump',
+  );
+});
+
+async function petPhysicsFixture(offset = 0) {
+  const R = await import('@dimforge/rapier3d-compat');
+  await R.init();
+  const { createDirector } = await import('../src/lib/pet3d/director.js');
+  const { createPetInput } = await import('../src/lib/pet3d/state.js');
+  const world = new R.World({ x: 0, y: -26, z: 0 });
+  const surface = {
+    id: 'panel',
+    kind: 'calendar',
+    left: 15,
+    right: 20,
+    top: -8 - offset,
+    bottom: -12 - offset,
+  };
+  const panel = world.createRigidBody(
+    R.RigidBodyDesc.fixed().setTranslation(17.5, -10 - offset, 0),
+  );
+  world.createCollider(R.ColliderDesc.cuboid(2.5, 2, 1), panel);
+  const floor = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(20, -29 - offset, 0));
+  world.createCollider(R.ColliderDesc.cuboid(20, 0.1, 1), floor);
+  const cat = world.createRigidBody(
+    R.RigidBodyDesc.dynamic().setTranslation(0, 0, 0).setCcdEnabled(true).lockRotations(),
+  );
+  world.createCollider(R.ColliderDesc.cuboid(0.57, 0.42, 0.27).setFriction(0.8), cat);
+  const ball = world.createRigidBody(
+    R.RigidBodyDesc.dynamic().setTranslation(1, 0, 0).setCcdEnabled(true),
+  );
+  world.createCollider(R.ColliderDesc.ball(0.15).setMass(0.12), ball);
+  const attributes = new Set();
+  const text = {
+    textContent: 'Your journal',
+    setAttribute: (name) => attributes.add(name),
+    removeAttribute: (name) => attributes.delete(name),
+  };
+  const layout = {
+    pageKey: 'journal',
+    revision: 'initial',
+    bounds: { left: 0, right: 40, top: 0, bottom: -30 - offset, width: 40, height: 30 + offset },
+    boxes: [surface],
+    surfaces: [surface],
+    elementsById: new Map([['panel', text]]),
+  };
+  const input = createPetInput(),
+    modes = [];
+  const ai = createDirector({
+    cat,
+    ball,
+    world,
+    rapier: R,
+    input,
+    layout: () => layout,
+    notify: (mode) => modes.push(mode),
+  });
+  ai.initialize();
+  function step(count = 1) {
+    for (let i = 0; i < count; i++) {
+      ai.step(1 / 60);
+      world.step();
+    }
+  }
+  step(5);
+  return {
+    R,
+    world,
+    cat,
+    ball,
+    input,
+    ai,
+    step,
+    modes,
+    attributes,
+    text,
+    layout,
+    dispose() {
+      ai.dispose();
+      world.free();
+    },
+  };
+}
+
+test('fetching follows the mouth deep in the document and restores ball physics on release', async () => {
+  const f = await petPhysicsFixture(700),
+    originalRandom = Math.random;
+  try {
+    Math.random = () => 0.2;
+    const p = f.cat.translation();
+    f.ball.setTranslation({ x: p.x + 0.8, y: p.y - 0.25, z: 0 }, true);
+    f.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    Object.assign(f.input.mouth, { x: p.x + 0.4, y: p.y + 0.1, z: 0 });
+    f.input.ballMoved = true;
+    f.step(2);
+    assert.equal(f.input.carryingBall, true);
+    assert.equal(f.ball.isKinematic(), true);
+    f.input.mouth.x += 2;
+    f.input.mouth.y += 0.2;
+    f.step(5);
+    assert.ok(Math.abs(f.ball.translation().x - f.input.mouth.x) < 0.01);
+    assert.ok(f.ball.translation().y < -700, 'fetch remains in document space below the viewport');
+    f.ai.dropBall();
+    assert.equal(f.ball.isDynamic(), true);
+    assert.equal(f.ball.collider(0).isEnabled(), true);
+    const before = f.ball.translation().y;
+    f.step(40);
+    assert.ok(f.ball.translation().y < before);
+  } finally {
+    Math.random = originalRandom;
+    f.dispose();
+  }
+});
+
+test('climbing grips an actual panel sidewall and lands on its top under gravity', async () => {
+  const f = await petPhysicsFixture();
+  try {
+    f.cat.setTranslation({ x: 14.4, y: -10, z: 0 }, true);
+    f.cat.setLinvel({ x: 9, y: 0, z: 0 }, true);
+    f.input.justTossed = true;
+    f.step();
+    f.ai.impactWall('panel');
+    assert.equal(f.ai.mode, 'climb');
+    assert.equal(f.cat.isKinematic(), true);
+    for (let i = 0; i < 240 && !f.modes.includes('land'); i++) f.step();
+    assert.ok(f.modes.includes('jump'));
+    assert.ok(f.modes.includes('land'));
+    assert.equal(f.cat.isDynamic(), true);
+    assert.ok(Math.abs(f.cat.translation().y - (-8 + 0.42)) < 0.15);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('scratching decorates text briefly and heals without modifying its content', async () => {
+  const f = await petPhysicsFixture(),
+    originalRandom = Math.random;
+  try {
+    Math.random = () => 0.999;
+    f.ball.setTranslation({ x: 30, y: -25, z: 0 }, true);
+    for (let i = 0; i < 360 && !f.attributes.has('data-pet-scratched'); i++) f.step();
+    assert.ok(f.attributes.has('data-pet-scratched'));
+    assert.equal(f.text.textContent, 'Your journal');
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    assert.equal(f.attributes.has('data-pet-scratched'), false);
+    assert.equal(f.text.textContent, 'Your journal');
+  } finally {
+    Math.random = originalRandom;
+    f.dispose();
+  }
+});
+
+test('dragging a CCD toy through the cat cannot impart a kinematic launch impulse', async () => {
+  const f = await petPhysicsFixture();
+  const { maskToyContacts, restoreToyContacts } = await import('../src/lib/pet3d/toyPhysics.js');
+  try {
+    const p = f.cat.translation();
+    f.ball.setTranslation({ x: p.x + 1.1, y: p.y - 0.27, z: 0 }, true);
+    f.ball.setBodyType(f.R.RigidBodyType.KinematicPositionBased, true);
+    const groups = maskToyContacts(f.ball);
+    for (let i = 0; i < 10; i++) {
+      f.ball.setNextKinematicTranslation({ x: p.x + 1.1 - i * 0.3, y: p.y - 0.27 + i * 0.3, z: 0 });
+      f.world.step();
+      assert.ok(Math.abs(f.cat.linvel().x) < 0.1, 'held toy sweeps must not launch the cat');
+    }
+    f.ball.setBodyType(f.R.RigidBodyType.Dynamic, true);
+    restoreToyContacts(f.ball, groups);
+    assert.equal(f.ball.collider(0).collisionGroups(), groups);
+    assert.ok(Math.abs(f.cat.translation().x - p.x) < 0.05);
+  } finally {
+    f.dispose();
+  }
 });

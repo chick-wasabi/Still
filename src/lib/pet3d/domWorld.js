@@ -1,26 +1,34 @@
-import { CAT, screenToWorld } from './math';
+import { CAT, PET_UNIT, screenToWorld } from './math';
 
-// Geometry is read only on invalidation. Neither React nor a render frame reads layout.
-export function observeDomWorld(onChange) {
+// Page coordinates have a permanent top-left origin. Scrolling never invalidates physics.
+export function observeDomWorld(host, onChange) {
   let frame = 0,
     settle = 0,
     disposed = false,
-    signature = '';
+    signature = '',
+    nextId = 0;
   const observed = new Set(),
     ids = new WeakMap();
-  let nextId = 0;
   const resize = new ResizeObserver(refresh);
   function measure() {
     frame = 0;
-    if (disposed) return;
-    const view = { width: innerWidth, height: innerHeight, unit: innerWidth < 600 ? 64 : 78 };
+    if (disposed || !host.isConnected) return;
+    const origin = host.getBoundingClientRect();
+    const view = {
+      width: host.clientWidth,
+      height: host.clientHeight,
+      unit: PET_UNIT,
+      document: true,
+    };
+    if (!view.width || !view.height) return;
     const boxes = [],
       surfaces = [],
-      elements = [
-        ...document.querySelectorAll(
-          '[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1',
-        ),
-      ];
+      elementsById = new Map();
+    const elements = [
+      ...host.querySelectorAll(
+        '[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1',
+      ),
+    ];
     for (const element of elements) {
       if (!element.getClientRects().length) continue;
       const heading =
@@ -35,22 +43,17 @@ export function observeDomWorld(onChange) {
         range.selectNodeContents(heading);
         rect = range.getBoundingClientRect();
       }
-      const clip = element.closest('.folder-tree')?.getBoundingClientRect();
-      if (
-        rect.bottom < 0 ||
-        rect.top > view.height ||
-        rect.right < 0 ||
-        rect.left > view.width ||
-        (clip && (rect.top < clip.top || rect.bottom > clip.bottom))
-      )
-        continue;
+      const left = Math.max(0, rect.left - origin.left),
+        right = Math.min(view.width, rect.right - origin.left);
+      const top = rect.top - origin.top,
+        bottom = rect.bottom - origin.top;
+      if (right <= left || bottom < 0 || top > view.height) continue;
       if (!ids.has(element)) ids.set(element, `ui-${nextId++}`);
-      const a = screenToWorld(Math.max(0, rect.left), rect.top, view),
-        b = screenToWorld(Math.min(view.width, rect.right), rect.bottom, view);
+      const a = screenToWorld(left, top, view),
+        b = screenToWorld(right, bottom, view);
       const kind =
         element.dataset.catSurface ||
         (element.matches('.entry-card') ? 'journal' : heading ? 'header' : 'panel');
-      // Headers/collection rows have thin ledges; solid cards and controls have full bodies.
       const thin =
         kind === 'header' || kind === 'collection' || element.matches('.notepad-section-heading');
       const box = {
@@ -63,36 +66,31 @@ export function observeDomWorld(onChange) {
       };
       if (box.right - box.left < 0.1) continue;
       boxes.push(box);
+      elementsById.set(box.id, heading || element.querySelector('h2,h3,.sticky-title') || element);
       if (
-        rect.top > CAT.halfHeight * 2 * view.unit + 15 &&
-        rect.top < view.height - 12 &&
+        top > CAT.halfHeight * 2 * view.unit + 4 &&
+        top < view.height - 4 &&
         box.right - box.left > CAT.halfWidth * 2 + 0.1
       )
         surfaces.push(box);
     }
-    const sidebar = document.querySelector('.sidebar')?.getBoundingClientRect();
-    if (sidebar && sidebar.width > 100 && sidebar.left >= 0 && sidebar.right < view.width * 0.6) {
-      const edge = screenToWorld(sidebar.right, 0, view);
-      boxes.push({
-        id: 'sidebar-wall',
-        kind: 'wall',
-        left: edge.x - 0.045,
-        right: edge.x,
-        top: view.height / view.unit / 2,
-        bottom: -view.height / view.unit / 2,
-      });
-    }
-    const bounds = { width: view.width / view.unit, height: view.height / view.unit };
-    const key = JSON.stringify([view, boxes]);
+    const bounds = {
+      width: view.width / view.unit,
+      height: view.height / view.unit,
+      left: 0,
+      right: view.width / view.unit,
+      top: 0,
+      bottom: -view.height / view.unit,
+    };
+    // Round subpixel DOM noise; a scroll offset cancels out of every measured rectangle.
+    const key = JSON.stringify([view, boxes], (_, value) =>
+      typeof value === 'number' ? Math.round(value * 1000) / 1000 : value,
+    );
     if (key !== signature) {
       signature = key;
-      onChange({ view, bounds, boxes, surfaces, revision: key });
+      onChange({ view, bounds, boxes, surfaces, elementsById, revision: key });
     }
-    const targets = [
-      document.querySelector('#main-content'),
-      document.querySelector('.sidebar'),
-      ...elements,
-    ].filter(Boolean);
+    const targets = [host, ...elements];
     for (const e of observed)
       if (!targets.includes(e)) {
         resize.unobserve(e);
@@ -115,7 +113,7 @@ export function observeDomWorld(onChange) {
     }
   }
   const observer = new MutationObserver(mutation);
-  observer.observe(document.body, {
+  observer.observe(host, {
     subtree: true,
     childList: true,
     characterData: true,
@@ -123,13 +121,56 @@ export function observeDomWorld(onChange) {
     attributeFilter: ['inert', 'open', 'aria-expanded'],
   });
   window.addEventListener('resize', refresh, { passive: true });
-  document.addEventListener('scroll', refresh, { passive: true, capture: true });
+  // A nested scrolling card changes its own surfaces; document scroll does not.
+  const nestedScroll = (event) => {
+    if (event.target !== document && host.contains(event.target)) refresh();
+  };
+  document.addEventListener('scroll', nestedScroll, { passive: true, capture: true });
   refresh();
   return () => {
     disposed = true;
     cancelAnimationFrame(frame);
     clearTimeout(settle);
     observer.disconnect();
+    resize.disconnect();
+    window.removeEventListener('resize', refresh);
+    document.removeEventListener('scroll', nestedScroll, true);
+  };
+}
+
+// A bounded raster window moves inside the absolute document layer. Bodies never move with it.
+// This avoids allocating a 20,000px-high GPU framebuffer for a long journal.
+export function observeRenderWindow(host, onChange) {
+  let frame = 0,
+    previous = '',
+    disposed = false;
+  function measure() {
+    frame = 0;
+    if (disposed) return;
+    const rect = host.getBoundingClientRect(),
+      height = Math.min(host.clientHeight, Math.ceil((innerHeight + 512) / 256) * 256, 2048);
+    const top = Math.min(
+      Math.max(0, host.clientHeight - height),
+      Math.max(0, Math.floor((-rect.top - 256) / 256) * 256),
+    );
+    const raster = { top, height, width: host.clientWidth };
+    const key = JSON.stringify(raster);
+    if (key !== previous) {
+      previous = key;
+      onChange(raster);
+    }
+  }
+  function refresh() {
+    if (!frame) frame = requestAnimationFrame(measure);
+  }
+  const resize = new ResizeObserver(refresh);
+  resize.observe(host);
+  window.addEventListener('resize', refresh, { passive: true });
+  document.addEventListener('scroll', refresh, { passive: true, capture: true });
+  refresh();
+  return () => {
+    disposed = true;
+    cancelAnimationFrame(frame);
     resize.disconnect();
     window.removeEventListener('resize', refresh);
     document.removeEventListener('scroll', refresh, true);

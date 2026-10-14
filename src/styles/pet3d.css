@@ -1,8 +1,11 @@
+#main-content {
+  position: relative;
+}
 /* The renderer never consumes HTML pointer events; only raycast hits initiate a drag. */
 .pet3d-layer {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 65;
+  z-index: 20;
   pointer-events: none;
   overflow: hidden;
   contain: layout style;
@@ -19,7 +22,7 @@
 }
 .pet3d-controls {
   position: absolute;
-  bottom: 94px;
+  top: 12px;
   right: 24px;
   display: flex;
   gap: 5px;
@@ -60,7 +63,7 @@
 .pet3d-unavailable {
   position: absolute;
   right: 24px;
-  bottom: 94px;
+  top: 12px;
   max-width: min(360px, calc(100vw - 40px));
   padding: 12px 15px;
   display: flex;
@@ -83,12 +86,41 @@
   background: none;
   cursor: pointer;
 }
-html[data-pet-cursor='true'],
-html[data-pet-cursor='true'] * {
+html[data-pet-cursor='true'] #main-content,
+html[data-pet-cursor='true'] #main-content * {
   cursor: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
   .pet3d-control {
     transition: none;
+  }
+}
+
+/* The text is never changed; the decorative scratch heals after one animation. */
+[data-pet-scratched] {
+  animation: pet-scratch-heal 650ms steps(3, end) both;
+}
+@keyframes pet-scratch-heal {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    text-shadow: none;
+  }
+  20%,
+  55% {
+    transform: translate3d(-0.7px, 0.4px, 0);
+    text-shadow:
+      1px 0 #e5c78577,
+      -1px 0 #7cd6b466;
+  }
+  35%,
+  70% {
+    transform: translate3d(0.7px, -0.3px, 0);
+    text-shadow: -1px 0 #e5c78555;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-pet-scratched] {
+    animation: none;
   }
 }

@@ -293,6 +293,11 @@ function Workspace({ workspace }) {
                   Make it yours
                 </button>
               </footer>
+              <PetCompanion
+                enabled={catEnabled}
+                suspended={Boolean(editor || settings || search)}
+                layoutKey={`${workspace.activeSpaceId}-${view}`}
+              />
             </main>
           </div>
           <button
@@ -306,11 +311,6 @@ function Workspace({ workspace }) {
             <Plus size={17} />
           </button>
         </div>
-        <PetCompanion
-          enabled={catEnabled}
-          suspended={Boolean(editor || settings || search)}
-          layoutKey={`${workspace.activeSpaceId}-${view}-${collapsed}`}
-        />
         {editor && (
           <Editor
             key={editor.id}

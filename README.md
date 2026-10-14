@@ -37,7 +37,7 @@ Still brings your journal, tasks, and habits into one quiet corner of the intern
 
 ## 🐾 Meet your least productive teammate
 
-The cat is a procedural, 30-bone 3D character with Rapier physics and a stochastic behavior engine. It walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels.
+The cat is a procedural, 30-bone 3D character with Rapier physics and a stochastic behavior engine. Now roughly 30 pixels tall, it walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels. It lives in the page itself: scroll away and it leaves the screen with the content, then comes back where you left it (unless it has been busy being a cat).
 
 - **Drag and release the cat** to toss it. Fast wall impacts can produce a brief cling before gravity files its objection.
 - **Throw the toy ball** and let the cat decide whether this meeting could have been a chase.

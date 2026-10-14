@@ -10,10 +10,9 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { createPortal } from 'react-dom';
 import { Cat, CircleDot, RotateCcw } from 'lucide-react';
 import useReducedMotion from '../../hooks/useReducedMotion';
-import { observeDomWorld } from '../../lib/pet3d/domWorld';
+import { observeDomWorld, observeRenderWindow } from '../../lib/pet3d/domWorld';
 import { createPetInput, restoreNativeCursor } from '../../lib/pet3d/state';
 const PetScene = lazy(() => import('./PetScene'));
 
@@ -45,6 +44,7 @@ function Companion({ suspended, layoutKey }) {
     input = useMemo(createPetInput, []),
     reduced = useReducedMotion();
   const [layout, setLayout] = useState(null),
+    [raster, setRaster] = useState(null),
     [ready, setReady] = useState(false),
     [supported, setSupported] = useState(supportsWebGL),
     [failed, setFailed] = useState(false),
@@ -73,14 +73,18 @@ function Companion({ suspended, layoutKey }) {
     return () => restoreNativeCursor(input);
   }, [input, paused, reduced]);
   useEffect(() => {
-    const stop = observeDomWorld(setLayout);
+    const host = layer.current.closest('#main-content');
+    input.host = host;
+    const stop = observeDomWorld(host, (next) => setLayout({ ...next, pageKey: layoutKey }));
+    const stopRaster = observeRenderWindow(host, setRaster);
     setSettling(true);
     const timer = setTimeout(() => setSettling(false), 240);
     return () => {
       stop();
+      stopRaster();
       clearTimeout(timer);
     };
-  }, [layoutKey]);
+  }, [layoutKey, input]);
   useEffect(() => {
     const sync = () => {
       const nav = document.querySelector('.mobile-sidebar-scrim');
@@ -130,7 +134,7 @@ function Companion({ suspended, layoutKey }) {
       </button>
     </div>
   );
-  return createPortal(
+  return (
     <div
       ref={layer}
       className="pet3d-layer"
@@ -140,11 +144,20 @@ function Companion({ suspended, layoutKey }) {
       data-physics="rapier"
       aria-label="3D companion"
     >
-      {!unavailable && supported && layout && (
-        <div className="pet3d-canvas" style={{ visibility: paused ? 'hidden' : 'visible' }}>
+      {!unavailable && supported && layout && raster && (
+        <div
+          className="pet3d-canvas"
+          style={{
+            top: raster.top,
+            height: raster.height,
+            visibility: paused ? 'hidden' : 'visible',
+          }}
+        >
           <RenderBoundary key={attempt} onFailure={onFailure} fallback={null}>
             <Suspense fallback={null}>
-              <PetScene {...{ layout, input, layer, onReady, onContextLost, paused, reduced }} />
+              <PetScene
+                {...{ layout, raster, input, layer, onReady, onContextLost, paused, reduced }}
+              />
             </Suspense>
           </RenderBoundary>
         </div>
@@ -176,8 +189,7 @@ function Companion({ suspended, layoutKey }) {
           </button>
         </div>
       )}
-    </div>,
-    document.body,
+    </div>
   );
 }
 export default memo(function PetCompanion({ enabled = true, suspended = false, layoutKey = '' }) {

@@ -1,7 +1,16 @@
 import { Plane, Vector2, Vector3, Raycaster } from 'three';
-import { CAT, clamp, clearBody, screenToWorld, worldToScreen, tossVelocity } from './math';
+import {
+  CAT,
+  clamp,
+  clearBody,
+  screenToWorld,
+  worldToScreen,
+  tossVelocity,
+  worldBounds,
+} from './math';
 
 import { restoreNativeCursor } from './state';
+import { maskToyContacts, restoreToyContacts } from './toyPhysics';
 
 export function bindPetInput({
   input,
@@ -26,7 +35,11 @@ export function bindPetInput({
     return input.ready && !input.paused && !input.reduced && !document.hidden;
   }
   function usable() {
-    return interactive() && fine.matches;
+    return interactive() && fine.matches && input.pointer.inside;
+  }
+  function localPoint(event) {
+    const rect = input.host.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
   function activity() {
     director.interrupt();
@@ -36,8 +49,10 @@ export function bindPetInput({
     const view = layout().view;
     input.pointer.x = event.clientX;
     input.pointer.y = event.clientY;
-    input.pointer.inside = true;
-    Object.assign(input.worldPointer, screenToWorld(event.clientX, event.clientY, view));
+    const local = localPoint(event);
+    input.pointer.inside =
+      local.x >= 0 && local.x <= view.width && local.y >= 0 && local.y <= view.height;
+    Object.assign(input.worldPointer, screenToWorld(local.x, local.y, view));
     input.cursorType = event.target.closest?.('input,textarea,[contenteditable="true"]')
       ? 'text'
       : event.target.closest?.('button,a,[role="button"]')
@@ -50,7 +65,9 @@ export function bindPetInput({
     if (!input.held) cursor.current?.position.set(input.worldPointer.x, input.worldPointer.y, 5);
   }
   function cast(event) {
-    ndc.set((event.clientX / innerWidth) * 2 - 1, 1 - (event.clientY / innerHeight) * 2);
+    const local = localPoint(event),
+      raster = input.raster;
+    ndc.set((local.x / raster.width) * 2 - 1, 1 - ((local.y - raster.top) / raster.height) * 2);
     raycaster.setFromCamera(ndc, camera);
     raycaster.ray.intersectPlane(plane, point);
     return point;
@@ -63,17 +80,10 @@ export function bindPetInput({
       drag = input.drag,
       l = layout(),
       hw = drag.kind === 'cat' ? CAT.halfWidth : 0.15,
-      hh = drag.kind === 'cat' ? CAT.halfHeight : 0.15;
-    let x = clamp(
-        p.x + drag.offset.x,
-        -l.bounds.width / 2 + hw + 0.04,
-        l.bounds.width / 2 - hw - 0.04,
-      ),
-      y = clamp(
-        p.y + drag.offset.y,
-        -l.bounds.height / 2 + hh + 0.12,
-        l.bounds.height / 2 - hh - 0.06,
-      );
+      hh = drag.kind === 'cat' ? CAT.halfHeight : 0.15,
+      edge = worldBounds(l.bounds);
+    let x = clamp(p.x + drag.offset.x, edge.left + hw + 0.04, edge.right - hw - 0.04),
+      y = clamp(p.y + drag.offset.y, edge.bottom + hh + 0.12, edge.top - hh - 0.06);
     // Keep a held actor outside solid panels before returning it to dynamic physics.
     for (const b of l.boxes)
       if (x + hw > b.left && x - hw < b.right && y + hh > b.bottom && y - hh < b.top) {
@@ -100,6 +110,7 @@ export function bindPetInput({
     updatePointer(event);
     if (
       !interactive() ||
+      !input.pointer.inside ||
       event.button !== 0 ||
       event.target.closest?.('.pet3d-controls,.pet3d-unavailable')
     )
@@ -110,16 +121,17 @@ export function bindPetInput({
       b = ball.translation();
     const catScreen = worldToScreen(c.x, c.y, view),
       ballScreen = worldToScreen(b.x, b.y, view),
-      pickables = [];
+      pickables = [],
+      local = localPoint(event);
     if (
-      Math.abs(event.clientX - catScreen.x) < view.unit * 1.2 &&
-      Math.abs(event.clientY - catScreen.y) < view.unit * 1.5
+      Math.abs(local.x - catScreen.x) < view.unit * 1.2 &&
+      Math.abs(local.y - catScreen.y) < view.unit * 1.5
     ) {
       catMesh.updateMatrixWorld(true);
       catMesh.computeBoundingSphere();
       pickables.push(catMesh);
     }
-    if (Math.hypot(event.clientX - ballScreen.x, event.clientY - ballScreen.y) < view.unit * 0.22) {
+    if (Math.hypot(local.x - ballScreen.x, local.y - ballScreen.y) < view.unit * 0.22) {
       ballMesh.updateMatrixWorld(true);
       pickables.push(ballMesh);
     }
@@ -137,7 +149,11 @@ export function bindPetInput({
       capture: event.target,
       id: event.pointerId,
     };
-    if (kind === 'ball') input.ballMoved = true;
+    if (kind === 'ball') {
+      director.dropBall();
+      input.ballMoved = true;
+      input.drag.collisionGroups = maskToyContacts(body);
+    }
     body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
     body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     event.target.setPointerCapture?.(event.pointerId);
@@ -152,6 +168,11 @@ export function bindPetInput({
     const drag = input.drag;
     if (!drag) return;
     drag.body.setBodyType(rapier.RigidBodyType.Dynamic, true);
+    if (drag.kind === 'ball') {
+      const position = drag.samples.at(-1);
+      drag.body.setTranslation({ x: position.x, y: position.y, z: 0 }, true);
+      restoreToyContacts(drag.body, drag.collisionGroups);
+    }
     const last = drag.samples.at(-1);
     if (last && performance.now() - last.t > 110)
       drag.samples.push({ ...last, t: performance.now() });
@@ -190,6 +211,16 @@ export function bindPetInput({
     activity();
     invalidate();
   }
+  function scroll() {
+    if (!input.pointer.inside || input.held) return;
+    // Keep the unheld visual at the real pointer while the document moves beneath it.
+    const local = localPoint({ clientX: input.pointer.x, clientY: input.pointer.y });
+    const view = layout().view;
+    Object.assign(input.worldPointer, screenToWorld(local.x, local.y, view));
+    if (local.x < 0 || local.x > view.width || local.y < 0 || local.y > view.height)
+      restoreNativeCursor(input);
+    invalidate();
+  }
   input.cancelDrag = () => release({}, true);
   function touch(event) {
     restoreNativeCursor(input, false);
@@ -203,7 +234,7 @@ export function bindPetInput({
     [document, 'pointercancel', (e) => release(e, true), { capture: true }],
     [document, 'click', click, { capture: true }],
     [document, 'keydown', key, { capture: true }],
-    [document, 'wheel', key, { passive: true, capture: true }],
+    [document, 'scroll', scroll, { passive: true, capture: true }],
     [document, 'touchstart', touch, { passive: false, capture: true }],
     [document, 'touchmove', touch, { passive: false, capture: true }],
     [document.documentElement, 'pointerleave', leave],

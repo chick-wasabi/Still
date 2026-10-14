@@ -204,7 +204,7 @@ export function createCatModel() {
       rootY = 0,
       bodyScale = 1;
     const walking = ['walk', 'patrol', 'hunt', 'carry', 'stalk'].includes(mode),
-      running = mode === 'run';
+      running = mode === 'run' || mode === 'descend';
     if (walking || running) {
       const frequency = running ? 13 : 7,
         phase = t * frequency;
@@ -265,10 +265,27 @@ export function createCatModel() {
       for (let i = 0; i < 7; i++) rotate(`tail${i}`, 0.11, 0.26, -0.08);
       if (Math.sin(t * 1.3) > 0.94) rotate('earL', 0.12, 0, 0.1);
     }
-    if (mode === 'cling') {
+    if (mode === 'cling' || mode === 'climb') {
       curl = 0.7;
       rotate('root', 0, 0, 0.95);
       rotate('head', 0, 0.3, 0.35);
+      if (mode === 'climb') {
+        curl = 0;
+        for (const [i, name] of ['frontNear', 'frontFar', 'rearNear', 'rearFar'].entries()) {
+          const grip = Math.sin(t * 10 + i * Math.PI);
+          rotate(name, 0, 0, -0.8 + grip * 0.32);
+          rotate(`${name}Knee`, 0, 0, 0.8 - grip * 0.25);
+          rotate(`${name}Paw`, 0, 0, grip * 0.2);
+        }
+      }
+    }
+    if (mode === 'scratch') {
+      rotate('head', 0, 0.4, -0.25);
+      for (const [i, name] of ['frontNear', 'frontFar'].entries()) {
+        const rake = Math.sin(t * 16 + i * Math.PI);
+        rotate(name, 0, 0, -0.6 + rake * 0.45);
+        rotate(`${name}Knee`, 0, 0, 0.5 + rake * 0.3);
+      }
     }
     if (mode === 'bat') {
       rotate('frontNear', 0, Math.sin(t * 13) * 0.55, -1);
@@ -303,7 +320,9 @@ export function createCatModel() {
   function clampSpeed(n) {
     return Math.min(12, Math.max(-12, n));
   }
+  geometry.computeBoundingBox();
   return {
+    standingHeight: geometry.boundingBox.max.y - geometry.boundingBox.min.y,
     mesh,
     bones,
     byName,

@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   Physics,
@@ -12,26 +12,29 @@ import * as THREE from 'three';
 import { createCatModel } from '../../lib/pet3d/catModel';
 import { createDirector } from '../../lib/pet3d/director';
 import { bindPetInput } from '../../lib/pet3d/input';
-import { CAT, GRAVITY, worldToScreen } from '../../lib/pet3d/math';
+import { CAT, GRAVITY, worldToScreen, worldBounds } from '../../lib/pet3d/math';
 
 function Platforms({ layout }) {
   const { bounds, boxes } = layout;
+  const edge = worldBounds(bounds),
+    cx = (edge.left + edge.right) / 2,
+    cy = (edge.top + edge.bottom) / 2;
   const edges = [
     {
       id: 'floor',
       kind: 'floor',
-      x: 0,
-      y: -bounds.height / 2 + 0.025,
+      x: cx,
+      y: edge.bottom + 0.025,
       w: bounds.width / 2,
       h: 0.055,
     },
-    { id: 'left', kind: 'wall', x: -bounds.width / 2 - 0.05, y: 0, w: 0.05, h: bounds.height / 2 },
-    { id: 'right', kind: 'wall', x: bounds.width / 2 + 0.05, y: 0, w: 0.05, h: bounds.height / 2 },
+    { id: 'left', kind: 'wall', x: edge.left - 0.05, y: cy, w: 0.05, h: bounds.height / 2 },
+    { id: 'right', kind: 'wall', x: edge.right + 0.05, y: cy, w: 0.05, h: bounds.height / 2 },
     {
       id: 'ceiling',
       kind: 'wall',
-      x: 0,
-      y: bounds.height / 2 + 0.05,
+      x: cx,
+      y: edge.top + 0.05,
       w: bounds.width / 2,
       h: 0.05,
     },
@@ -99,7 +102,7 @@ function CursorModel({ group, input }) {
     text.current.visible = !arrow.current.visible;
   });
   return (
-    <group ref={group} visible={false} renderOrder={20}>
+    <group ref={group} scale={1.8} visible={false} renderOrder={20}>
       <mesh ref={arrow} geometry={geometry}>
         <meshStandardMaterial
           color={input.held ? '#f6df9d' : '#fff9ed'}
@@ -133,6 +136,19 @@ function Actors({ layout, input, layer, onReady }) {
     director = useRef();
   const shadow = useRef(),
     ballShadow = useRef();
+  const yarn = useMemo(() => {
+    const points = Array.from({ length: 181 }, (_, i) => {
+      const t = (i / 180) * Math.PI * 12,
+        latitude = Math.sin(t * 0.41) * 1.25;
+      return new THREE.Vector3(
+        Math.cos(t) * Math.cos(latitude) * 0.151,
+        Math.sin(latitude) * 0.151,
+        Math.sin(t) * Math.cos(latitude) * 0.151,
+      );
+    });
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 180, 0.008, 3, false);
+  }, []);
+  useEffect(() => () => yarn.dispose(), [yarn]);
   const model = useMemo(createCatModel, []),
     currentLayout = useRef(layout);
   currentLayout.current = layout;
@@ -193,7 +209,7 @@ function Actors({ layout, input, layer, onReady }) {
   useEffect(() => () => model.dispose(), [model]);
   useEffect(() => {
     if (input.reduced && director.current && visual.current && ballMesh.current) {
-      director.current.initialize();
+      director.current.reconcile();
       const c = cat.current.translation(),
         b = ball.current.translation();
       visual.current.parent.position.set(c.x, c.y, c.z);
@@ -205,7 +221,7 @@ function Actors({ layout, input, layer, onReady }) {
   }, [input.reduced, layout.revision, input, layer, invalidate]);
 
   useBeforePhysicsStep(() => {
-    if (!input.paused && !input.reduced) director.current?.step(1 / 60);
+    if (input.ready && !input.paused && !input.reduced) director.current?.step(1 / 60);
   });
   useFrame((_, dt) => {
     const mode = input.reduced ? 'sleep' : input.mode;
@@ -229,9 +245,12 @@ function Actors({ layout, input, layer, onReady }) {
         look,
         input.reduced,
         input.facing,
-        input.held,
+        input.held || input.carryingBall,
       );
     }
+    model.mouthPosition(mouth);
+    input.mouth.x = mouth.x;
+    input.mouth.y = mouth.y;
     if (cursor.current) {
       if (input.held) {
         model.mouthPosition(mouth);
@@ -281,12 +300,26 @@ function Actors({ layout, input, layer, onReady }) {
     if (stats.telemetry > 0.12 && p && b && layer.current) {
       stats.telemetry = 0;
       const c = worldToScreen(p.x, p.y, currentLayout.current.view),
-        toy = worldToScreen(b.x, b.y, currentLayout.current.view);
+        toy = worldToScreen(b.x, b.y, currentLayout.current.view),
+        rect = input.host.getBoundingClientRect();
       Object.assign(layer.current.dataset, {
-        catX: c.x.toFixed(1),
-        catY: c.y.toFixed(1),
-        ballX: toy.x.toFixed(1),
-        ballY: toy.y.toFixed(1),
+        catX: (c.x + rect.left).toFixed(1),
+        catY: (c.y + rect.top).toFixed(1),
+        ballX: (toy.x + rect.left).toFixed(1),
+        ballY: (toy.y + rect.top).toFixed(1),
+        catDocumentX: c.x.toFixed(2),
+        catDocumentY: c.y.toFixed(2),
+        ballDocumentX: toy.x.toFixed(2),
+        ballDocumentY: toy.y.toFixed(2),
+        carryingBall: String(input.carryingBall),
+        mouthDocumentX: String(input.mouth.x * currentLayout.current.view.unit),
+        mouthDocumentY: String(-input.mouth.y * currentLayout.current.view.unit),
+        worldRevision: String(input.worldRevision || 0),
+        unit: String(currentLayout.current.view.unit),
+        standingHeight: String(model.standingHeight * currentLayout.current.view.unit),
+        rasterTop: String(input.raster.top),
+        cursorDocumentX: String(cursor.current?.position.x * currentLayout.current.view.unit),
+        cursorDocumentY: String(-cursor.current?.position.y * currentLayout.current.view.unit),
         grounded: String(input.grounded),
         holdingCursor: String(input.held),
         dragging: input.drag?.kind || 'none',
@@ -315,7 +348,9 @@ function Actors({ layout, input, layer, onReady }) {
           if (layer.current)
             layer.current.dataset.lastCollision =
               event.other.rigidBodyObject?.userData.kind || 'unknown';
-          if (event.other.rigidBodyObject?.userData.kind === 'wall') director.current?.impactWall();
+          const other = event.other.rigidBodyObject?.userData;
+          const normal = event.manifold.normal();
+          if (Math.abs(normal.x) > 0.7) director.current?.impactWall(other?.id);
         }}
       >
         <CuboidCollider
@@ -343,12 +378,9 @@ function Actors({ layout, input, layer, onReady }) {
           <sphereGeometry args={[0.15, 20, 14]} />
           <meshStandardMaterial color={accent} roughness={0.42} metalness={0.12} />
         </mesh>
-        {[0, Math.PI / 2].map((angle) => (
-          <mesh key={angle} rotation={[angle, 0, 0]}>
-            <torusGeometry args={[0.15, 0.009, 5, 24]} />
-            <meshStandardMaterial color="#f5e3b4" roughness={0.6} />
-          </mesh>
-        ))}
+        <mesh geometry={yarn}>
+          <meshStandardMaterial color="#f5e3b4" roughness={0.9} />
+        </mesh>
       </RigidBody>
       <mesh ref={shadow}>
         <circleGeometry args={[0.55, 24]} />
@@ -362,12 +394,17 @@ function Actors({ layout, input, layer, onReady }) {
     </>
   );
 }
-function World({ layout, input, layer, onReady, paused, reduced }) {
-  const { camera } = useThree();
-  useEffect(() => {
+function World({ layout, raster, input, layer, onReady, paused, reduced }) {
+  const { camera, invalidate } = useThree();
+  input.raster = raster;
+  useLayoutEffect(() => {
+    camera.position.x = layout.view.width / (2 * layout.view.unit);
+    camera.position.y = -(raster.top + raster.height / 2) / layout.view.unit;
     camera.zoom = layout.view.unit;
     camera.updateProjectionMatrix();
-  }, [camera, layout.view.unit]);
+    camera.updateMatrixWorld();
+    invalidate();
+  }, [camera, invalidate, layout.view.width, layout.view.unit, raster.top, raster.height]);
   return (
     <>
       <ambientLight intensity={0.5} />
@@ -389,6 +426,7 @@ function World({ layout, input, layer, onReady, paused, reduced }) {
 }
 export default function PetScene({
   layout,
+  raster,
   input,
   layer,
   onReady,
@@ -413,7 +451,7 @@ export default function PetScene({
       }}
     >
       <Suspense fallback={null}>
-        <World {...{ layout, input, layer, onReady, paused, reduced }} />
+        <World {...{ layout, raster, input, layer, onReady, paused, reduced }} />
       </Suspense>
     </Canvas>
   );
