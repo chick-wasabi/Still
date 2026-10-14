@@ -177,6 +177,7 @@ export default function Sidebar({
               event.stopPropagation();
               if (!dropNote(event, item.id)) reorder(event.dataTransfer.getData('folder'), item.id);
             }}
+            data-cat-surface="collection"
             className={`folder-row ${folder === item.id ? 'selected' : ''}`}
             style={{ '--depth': depth }}
           >

@@ -1,7 +1,11 @@
+import useReducedMotion from './hooks/useReducedMotion';
+import CalendarCat from './components/CalendarCat';
+import useMotionPreferences from './hooks/useMotionPreferences';
 import SanctuaryScene from './components/SanctuaryScene';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { motion, MotionConfig, useReducedMotion, AnimatePresence } from 'framer-motion';
+import React, { useCallback, useEffect, useMemo, useState, useLayoutEffect } from 'react';
+import { motion, MotionConfig, AnimatePresence } from 'framer-motion';
 import {
+  Cat,
   ChevronRight,
   Search,
   Plus,
@@ -27,6 +31,14 @@ import { dateKey } from './data';
 function Workspace({ workspace }) {
   const { data, update, locked, unlock, lock, protectedByPin, setPin, error, status } = workspace;
   const [view, setView] = useState('Journal');
+  const { catEnabled, toggleCat } = useMotionPreferences();
+  useLayoutEffect(() => {
+    document.documentElement.dataset.workspaceTheme =
+      workspace.activeSpaceId === 'work' ? 'work' : 'personal';
+    return () => {
+      delete document.documentElement.dataset.workspaceTheme;
+    };
+  }, [workspace.activeSpaceId]);
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 850);
   const [folder, setFolder] = useState(null);
   const [editor, setEditor] = useState(null);
@@ -154,9 +166,13 @@ function Workspace({ workspace }) {
     setToast('Entry added to your workspace.');
   };
   return (
-    <MotionConfig reducedMotion="user">
-      <div className="app-shell sanctuary-app">
-        <SanctuaryScene />
+    <MotionConfig reducedMotion={reduced ? 'always' : 'never'}>
+      <div
+        className="app-shell sanctuary-app"
+        data-space={workspace.activeSpaceId}
+        data-view={view}
+      >
+        <SanctuaryScene journal={view === 'Journal'} />
         <div className="workspace-shell">
           <Sidebar
             spaces={workspace.spaces}
@@ -196,6 +212,16 @@ function Workspace({ workspace }) {
                 <strong>{view}</strong>
               </div>
               <div className="topbar-right">
+                <button
+                  className="icon-button companion-toggle"
+                  aria-label={catEnabled ? 'Pause cat companion' : 'Resume cat companion'}
+                  aria-pressed={catEnabled}
+                  title={catEnabled ? 'Pause your cat companion' : 'Bring your cat companion back'}
+                  onClick={toggleCat}
+                >
+                  <Cat size={19} />
+                  <span className="companion-toggle-dot" />
+                </button>
                 <span
                   role="status"
                   className={`save-status ${status === 'error' ? 'save-error' : ''}`}
@@ -280,6 +306,11 @@ function Workspace({ workspace }) {
             <Plus size={17} />
           </button>
         </div>
+        <CalendarCat
+          enabled={catEnabled}
+          suspended={Boolean(editor || settings || search)}
+          layoutKey={`${workspace.activeSpaceId}-${view}-${collapsed}`}
+        />
         {editor && (
           <Editor
             key={editor.id}
@@ -395,7 +426,7 @@ export default function App() {
   const workspace = useWorkspace();
   const reduced = useReducedMotion();
   return (
-    <MotionConfig reducedMotion="user">
+    <MotionConfig reducedMotion={reduced ? 'always' : 'never'}>
       <AnimatePresence initial={false}>
         {workspace.locked ? (
           <motion.div

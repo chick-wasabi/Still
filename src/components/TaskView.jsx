@@ -128,7 +128,7 @@ export default function TaskView({ tasks, setTasks }) {
         </div>
         <h1>Your tasks.</h1>
         <div className="task-header-actions">
-          <button className="primary-button" onClick={() => focus()}>
+          <button data-cat-surface="button" className="primary-button" onClick={() => focus()}>
             <Plus size={18} />
             New task
           </button>

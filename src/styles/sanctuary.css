@@ -80,8 +80,7 @@
     opacity: 0;
   }
 }
-.ambient-paused .sanctuary-scene *,
-.ambient-paused .calendar-cat-track * {
+.ambient-paused .sanctuary-scene * {
   animation-play-state: paused !important;
 }
 .sanctuary-app .sidebar {
@@ -419,77 +418,11 @@
 }
 .calendar-header-scene {
   position: relative;
-  padding-bottom: 40px;
+  padding-bottom: 22px;
 }
-.calendar-cat-track {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 40px;
-  pointer-events: none;
-  overflow: hidden;
-}
-.calendar-cat {
-  position: absolute;
-  left: 0;
-  bottom: 1px;
-  width: 65px;
-  height: 40px;
-}
-.cat-leg {
-  transform-box: fill-box;
-  transform-origin: top center;
-  animation: cat-trot 0.32s ease-in-out infinite alternate;
-}
-.leg-two {
-  animation-delay: -0.32s;
-}
-.cat-tail {
-  transform-origin: 22px 25px;
-  animation: cat-tail 1s ease-in-out infinite alternate;
-}
-@keyframes cat-trot {
-  from {
-    transform: rotate(-22deg);
-  }
-  to {
-    transform: rotate(22deg);
-  }
-}
-@keyframes cat-tail {
-  from {
-    transform: rotate(-8deg);
-  }
-  to {
-    transform: rotate(8deg);
-  }
-}
+
 /* The track moves with translate, avoiding layout work on every frame. */
-.calendar-cat {
-  left: 0;
-  animation: cat-crossing 48s linear infinite;
-}
-.calendar-cat-track {
-  container-type: inline-size;
-}
-@keyframes cat-crossing {
-  0%,
-  3% {
-    transform: translate3d(-80px, 0, 0) scaleX(1);
-  }
-  32%,
-  51% {
-    transform: translate3d(calc(100cqw + 5px), 0, 0) scaleX(1);
-  }
-  52% {
-    transform: translate3d(calc(100cqw + 5px), 0, 0) scaleX(-1);
-  }
-  84%,
-  100% {
-    transform: translate3d(-80px, 0, 0) scaleX(-1);
-  }
-}
+
 .modal.editor-modal {
   position: relative;
   inset: auto;
@@ -996,12 +929,9 @@
     font-size: 16px;
   }
   .calendar-header-scene {
-    padding-bottom: 36px;
+    padding-bottom: 18px;
   }
-  .calendar-cat svg {
-    width: 55px;
-    height: 34px;
-  }
+
   .modal.editor-modal {
     width: calc(100vw - 24px);
     height: calc(100dvh - 32px);
@@ -1095,12 +1025,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sanctuary-scene *,
-  .calendar-cat-track * {
+  .sanctuary-scene * {
     animation: none !important;
-  }
-  .calendar-cat {
-    transform: translate3d(65cqw, 0, 0);
   }
 }
 .sanctuary-lock .lock-leaf svg {
@@ -1132,9 +1058,7 @@
   color: #a6b196;
   font-size: 11px;
 }
-.calendar-cat {
-  animation-delay: -5s;
-}
+
 .draft-tray {
   margin-top: 28px;
   padding: 20px;

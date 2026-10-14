@@ -1,4 +1,5 @@
-import React, { memo, useEffect } from 'react';
+import useAmbientLight from '../hooks/useAmbientLight';
+import React, { memo, useEffect, useRef } from 'react';
 function Pine({ x, y, height, shade }) {
   const width = height * 0.42;
   return (
@@ -15,7 +16,9 @@ function Pine({ x, y, height, shade }) {
     </g>
   );
 }
-export default memo(function SanctuaryScene({ night = false }) {
+export default memo(function SanctuaryScene({ night = false, journal = false }) {
+  const root = useRef(null);
+  useAmbientLight(root, journal && !night);
   useEffect(() => {
     const sync = () => document.documentElement.classList.toggle('ambient-paused', document.hidden);
     sync();
@@ -23,7 +26,11 @@ export default memo(function SanctuaryScene({ night = false }) {
     return () => document.removeEventListener('visibilitychange', sync);
   }, []);
   return (
-    <div className={`sanctuary-scene ${night ? 'forest-night' : 'golden-day'}`} aria-hidden="true">
+    <div
+      ref={root}
+      className={`sanctuary-scene ${night ? 'forest-night' : 'golden-day'} ${journal ? 'journal-atmosphere' : ''}`}
+      aria-hidden="true"
+    >
       <div className="ambient-orb" />
       <svg viewBox="0 0 1600 1100" preserveAspectRatio="xMidYMid slice">
         <defs>
@@ -77,16 +84,32 @@ export default memo(function SanctuaryScene({ night = false }) {
         />
       </svg>
       <div className="forest-haze" />
-      {Array.from({ length: 8 }, (_, index) => (
-        <i
-          key={index}
-          className="ambient-mote"
-          style={{
-            '--x': `${11 + index * 12}%`,
-            '--delay': `${index * -3.7}s`,
-            '--duration': `${17 + index * 2}s`,
-          }}
-        />
+      {!night && (
+        <>
+          <div className="work-atmosphere" />
+          <div className="cursor-parallax light-parallax" data-parallax="38">
+            <div className="cursor-light personal-light" />
+            <div className="cursor-light work-light" />
+          </div>
+        </>
+      )}
+
+      {[0, 1, 2].map((depth) => (
+        <div key={depth} className={`mote-depth depth-${depth}`} data-parallax={4 + depth * 7}>
+          {Array.from({ length: journal ? [18, 16, 10][depth] : [3, 3, 2][depth] }, (_, index) => (
+            <i
+              key={index}
+              className={`ambient-mote mote-${index % 3}`}
+              style={{
+                '--x': `${(index * 37 + depth * 19) % 100}%`,
+                '--start': `${(index * 29 + depth * 17) % 110}%`,
+                '--delay': `${-(index * 1.7 + depth * 3.3)}s`,
+                '--duration': `${journal ? 9 + ((index * 3 + depth) % 9) : 18 + index * 2}s`,
+                '--drift': `${(index % 2 ? -1 : 1) * (18 + (index % 5) * 8)}px`,
+              }}
+            />
+          ))}
+        </div>
       ))}
     </div>
   );

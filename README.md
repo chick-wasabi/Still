@@ -64,18 +64,32 @@ The `still-workspace-v2` key holds either the plaintext sanctuary (PIN off) or t
 
 Changes in another tab update an unprotected workspace, or lock a protected tab to prevent stale writes. All persisted entities use stable IDs. Task, habit, folder, and draft updates use functional state setters.
 
-## Interaction and motion
+## Atmosphere and the cat companion
 
-The forest is a bundled SVG illustration, with no external image/font requests. Ambient sunlight and motes use transform/opacity animation, and the calendar cat crosses on a compositor-friendly transform track. The scene pauses when the page is hidden. Reduced-motion settings stop continuous movement and remove the unlock transition. Dialogs trap focus, make background content inert, restore focus, and support Escape.
+Personal uses a warm charcoal/forest palette with golden and emerald highlights. Work uses slate-indigo with violet/cyan accents. Switching spaces crossfades background layers and transitions the shared accent tokens, including dialogs rendered in portals. The selected space remains the source of truth; theming does not copy journal or task data into preferences.
+
+The Journal renders 44 motes across three depth layers (24 visible on small screens), with static soft-focus treatment, brighter glow, and faster floating paths. Cursor movement gently shifts light and depth layers on devices with a precise pointer. Pointer updates are coalesced through a damped animation frame loop and never update React state. Other views use a quieter eight-particle scene. All illustrations are bundled SVGs with no external image/font requests.
+
+The cat lives in a single viewport overlay. It measures visible panel tops, collection rows, and button perches, then runs, rolls, plays with yarn, naps, jumps, climbs the sidebar wall, and scratches collection labels. Jumps use constant-acceleration parabolic paths checked against panel/card/input boundaries. The controller skips unsafe or clipped perches instead of forcing a route. Sidebar visits depend on visible collections and enough available space.
+
+Scratch effects are temporary transforms and a decorative overlay; collection names and stored data are never changed. Click the cat to pet it. The top-bar cat control pauses/removes or resumes the companion; this non-sensitive preference is stored separately in `still-motion-preferences`. The companion hides while dialogs or menus are open and stops when the workspace locks. Layout changes, scrolling, and sidebar collapse cause a fresh measurement.
+
+Movement frames write only `translate3d` transforms. Geometry reads are batched on layout changes, using ResizeObserver and MutationObserver rather than querying layout every frame. Stationary behaviors use timers and CSS pose animations instead of a continuously running JavaScript loop. CSS `will-change` is limited to moving layers. Timers, observers, listeners, scratch attributes, and animation frames are cleaned up on unmount.
+
+Hidden tabs pause ambience and the companion. Reduced-motion settings disable continuous movement, cursor parallax, and the unlock transition, and leave the cat resting. Dialogs trap focus, make background content inert, restore focus, and support Escape.
 
 ## Architecture
 
 - `src/hooks/useWorkspace.js`: persistence, workspace isolation, PIN lifecycle, recovery, cross-tab protection.
 - `src/lib/vault.js`: AES-GCM, PIN/answer derivation, recovery wrapping, data validation.
 - `src/data.js`: legacy migration, sanctuary normalization, date, folder, task, and streak logic.
+- `src/lib/motion/`: pure collision/trajectory geometry and the imperative companion state machine.
+- `src/hooks/useAmbientLight.js`: frame-coalesced cursor lighting without React re-renders.
+- `src/hooks/useMotionPreferences.js`: non-sensitive companion visibility preference.
 - `src/hooks/useToday.js`: midnight/focus rollover for daily tasks and habits.
 - `src/components/`: modular navigation/switcher, journal/calendar/editor, notepad tasks, habits, settings, lock/recovery screen, emoji picker, accessible modal, and error recovery.
 - `src/styles.css`: shared layout and component foundation.
-- `src/styles/sanctuary.css`: nature theme, illustrated lock scene, ambient motion, editor, notepad, and workspace-specific styling.
+- `src/styles/sanctuary.css`: nature illustration, lock scene, editor, and notepad foundation.
+- `src/styles/motion.css`: workspace palette tokens, ambient depth layers, companion poses, and motion accessibility.
 
-Tests exercise crypto authentication and tamper rejection, local recovery, wrong old PINs, migration, workspace isolation, auto-saved drafts, midnight resets, task drag/state updates, habits, storage failures, responsive layouts, and keyboard/reduced-motion behavior.
+Motion tests cover safe/blocked trajectories, partially obstructed perches, the complete behavior cycle, scratch restoration, pet/pause persistence, responsive bounds, hidden-tab pausing, cursor transforms, portal theming, and reduced motion. Workspace tests exercise crypto authentication and tamper rejection, local recovery, wrong old PINs, migration, workspace isolation, auto-saved drafts, midnight resets, task drag/state updates, habits, storage failures, responsive layouts, and keyboard/reduced-motion behavior.

@@ -58,7 +58,7 @@ export default function HabitTracker({ habits, setHabits }) {
     <>
       <div className="habit-page-header">
         <h1>Habits.</h1>
-        <button className="primary-button" onClick={add}>
+        <button data-cat-surface="button" className="primary-button" onClick={add}>
           <Plus size={19} />
           New habit
         </button>

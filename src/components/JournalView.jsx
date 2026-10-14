@@ -63,7 +63,7 @@ export default function JournalView({
               : 'No expectations. Just a place to begin.'}
           </p>
         </div>
-        <button className="primary-button" onClick={newNote}>
+        <button data-cat-surface="button" className="primary-button" onClick={newNote}>
           <Plus size={19} />
           New entry
         </button>

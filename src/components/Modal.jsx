@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { motion, useReducedMotion } from 'framer-motion';
+import { motion } from 'framer-motion';
+import useReducedMotion from '../hooks/useReducedMotion';
 export default function Modal({ title, onClose, children, wide = false }) {
   const ref = useRef(null);
   const closeRef = useRef(onClose);

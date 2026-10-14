@@ -4,6 +4,7 @@ import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 import './styles.css';
 import './styles/sanctuary.css';
+import './styles/motion.css';
 
 createRoot(document.getElementById('root')).render(
   <ErrorBoundary>

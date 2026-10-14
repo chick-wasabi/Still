@@ -1,4 +1,3 @@
-import CalendarCat from './CalendarCat';
 import React, { useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { dateKey } from '../data';
@@ -13,9 +12,12 @@ export default function Calendar({ month, setMonth, notes, openDate }) {
     return map;
   }, [notes]);
   return (
-    <section className="panel calendar-panel" aria-label="Journal calendar">
+    <section
+      data-cat-surface="calendar"
+      className="panel calendar-panel"
+      aria-label="Journal calendar"
+    >
       <div className="section-heading calendar-header-scene">
-        <CalendarCat />
         <div>
           <span className="eyebrow">MAKE A MOMENT</span>
           <h3>Your days, at a glance.</h3>

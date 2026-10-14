@@ -147,3 +147,57 @@ test('local recovery never stores the answer, rejects incorrect answers and decr
     ),
   );
 });
+
+test('companion jumps follow a parabolic trajectory and clear solid panels', async () => {
+  const { jumpPoint, planJump, safePoint } = await import('../src/lib/motion/geometry.js');
+  const from = { x: 100, y: 300 },
+    to = { x: 600, y: 220 };
+  const obstacles = [{ left: 290, right: 410, top: 250, bottom: 550 }];
+  const viewport = { width: 800, height: 600 };
+  const plan = planJump(from, to, obstacles, viewport);
+  assert.ok(plan, 'a safe arc should exist');
+  assert.deepEqual(jumpPoint(from, to, plan.height, 0), from);
+  assert.deepEqual(jumpPoint(from, to, plan.height, 1), to);
+  for (let step = 0; step <= 200; step++)
+    assert.ok(safePoint(jumpPoint(from, to, plan.height, step / 200), obstacles, viewport));
+  const y0 = jumpPoint(from, to, plan.height, 0.4).y,
+    y1 = jumpPoint(from, to, plan.height, 0.5).y,
+    y2 = jumpPoint(from, to, plan.height, 0.6).y;
+  assert.ok(y2 - 2 * y1 + y0 > 0, 'vertical acceleration should point downward');
+});
+
+test('companion rejects clipped perches and impossible routes', async () => {
+  const { visibleSurface, planJump } = await import('../src/lib/motion/geometry.js');
+  const viewport = { width: 800, height: 600 };
+  assert.equal(visibleSurface({ left: 20, right: 70, top: 100, bottom: 130 }, viewport), null);
+  assert.equal(visibleSurface({ left: 20, right: 220, top: 25, bottom: 70 }, viewport), null);
+  assert.equal(
+    visibleSurface({ left: 20, right: 220, top: 120, bottom: 150 }, viewport, {
+      left: 0,
+      right: 300,
+      top: 130,
+      bottom: 250,
+    }),
+    null,
+  );
+  assert.equal(
+    planJump(
+      { x: 100, y: 350 },
+      { x: 650, y: 350 },
+      [{ left: 300, right: 450, top: 0, bottom: 600 }],
+      viewport,
+    ),
+    null,
+  );
+});
+
+test('companion selects a free part of a partially obstructed ledge', async () => {
+  const { findPerch, safePoint } = await import('../src/lib/motion/geometry.js');
+  const surface = { left: 80, right: 720, top: 300 };
+  const viewport = { width: 800, height: 600 };
+  const obstacles = [{ left: 100, right: 440, top: 250, bottom: 400 }];
+  const point = findPerch(surface, obstacles, viewport, 0.2);
+  assert.ok(point);
+  assert.ok(point.x > 440);
+  assert.ok(safePoint(point, obstacles, viewport));
+});
