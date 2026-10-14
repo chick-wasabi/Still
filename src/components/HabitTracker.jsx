@@ -1,3 +1,4 @@
+import useToday from '../hooks/useToday';
 import React, { useState } from 'react';
 import {
   Plus,
@@ -24,7 +25,7 @@ export default function HabitTracker({ habits, setHabits }) {
     day.setDate(day.getDate() + index);
     return day;
   });
-  const today = dateKey();
+  const today = useToday();
   function toggle(id, key) {
     setHabits((current) =>
       current.map((habit) =>
@@ -39,11 +40,6 @@ export default function HabitTracker({ habits, setHabits }) {
       ),
     );
   }
-  const completed = habits.reduce(
-    (count, habit) => count + days.filter((day) => habit.days.includes(dateKey(day))).length,
-    0,
-  );
-  const possible = habits.length * days.filter((day) => dateKey(day) <= today).length;
   function add() {
     setEditing({ id: crypto.randomUUID(), name: '', emoji: '🌱', days: [] });
   }
@@ -60,21 +56,8 @@ export default function HabitTracker({ habits, setHabits }) {
   }
   return (
     <>
-      <div className="page-intro">
-        <div className="eyebrow">
-          <span />
-          SMALL STEPS. LASTING CHANGE.
-        </div>
-        <h1>
-          Grow at your own pace.<span className="intro-sparkle">🌱</span>
-        </h1>
-        <p>Build a practice that feels good to come back to.</p>
-      </div>
-      <div className="journal-heading">
-        <div>
-          <h2>Your daily rituals</h2>
-          <p>Consistency starts with showing up. One day is enough.</p>
-        </div>
+      <div className="habit-page-header">
+        <h1>Habits.</h1>
         <button className="primary-button" onClick={add}>
           <Plus size={19} />
           New habit
@@ -84,32 +67,14 @@ export default function HabitTracker({ habits, setHabits }) {
         <div className="panel">
           <EmptyState
             icon={Sprout}
-            title="Plant your first small habit."
-            description="Read a page. Take a breath. Step outside. Start with something you want to make time for."
-            action="Create your first habit"
+            title="Your first habit starts here."
+            description="Add a habit to start tracking your week."
+            action="Add your first habit"
             onAction={add}
           />
         </div>
       ) : (
         <>
-          <div className="habit-summary panel">
-            <div>
-              <span className="stat-icon green">
-                <Sprout size={26} />
-              </span>
-              <div>
-                <h3>A little better, a little brighter.</h3>
-                <p>
-                  {completed} {completed === 1 ? 'moment' : 'moments'} of intention this week. Every
-                  check counts.
-                </p>
-              </div>
-            </div>
-            <strong>
-              {possible ? Math.round((completed / possible) * 100) : 0}
-              <small>% of days so far</small>
-            </strong>
-          </div>
           <section className="panel habit-panel">
             <div className="calendar-controls">
               <h2>
@@ -216,18 +181,7 @@ export default function HabitTracker({ habits, setHabits }) {
                 </tbody>
               </table>
             </div>
-            <div className="habit-grid-footer">
-              <span>Streaks count consecutive days through today or yesterday.</span>
-              <button className="add-task" onClick={add}>
-                <Plus size={17} />
-                Add a ritual
-              </button>
-            </div>
           </section>
-          <div className="journal-reminder">
-            <Sprout size={17} />
-            <span>Missed a day? A fresh start is always one small step away.</span>
-          </div>
         </>
       )}
       {editing && (

@@ -1,4 +1,4 @@
-import React, { useState, useRef, lazy, Suspense } from 'react';
+import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
 import {
   Bold,
@@ -13,15 +13,53 @@ import {
 } from 'lucide-react';
 import Modal from './Modal';
 import EmojiPicker from './EmojiPicker';
-export default function Editor({ note, folders, onSave, onClose, onDelete }) {
+export default function Editor({
+  note,
+  folders,
+  onSave,
+  onClose,
+  onDelete,
+  onDraftChange,
+  onDiscard,
+}) {
   const [draft, setDraft] = useState({ ...note });
   const [preview, setPreview] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const area = useRef(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(note);
   const close = () => {
-    if (!dirty || confirm('Discard your unsaved changes?')) onClose();
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    if (confirm('Discard this draft’s unsaved changes?')) {
+      onDiscard?.();
+      onClose();
+    }
   };
+  const pending = useRef(false);
+  useEffect(() => {
+    if (!dirty || !onDraftChange) return;
+    pending.current = true;
+    const timer = setTimeout(() => {
+      pending.current = false;
+      onDraftChange(draft);
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      pending.current = false;
+    };
+  }, [draft, dirty, onDraftChange]);
+  useEffect(() => {
+    const warn = (event) => {
+      if (pending.current) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
   function format(before, after = before) {
     const input = area.current;
     if (!input) return;
@@ -88,7 +126,7 @@ export default function Editor({ note, folders, onSave, onClose, onDelete }) {
             value={folders.some((folder) => folder.id === draft.folder) ? draft.folder : ''}
             onChange={(event) => setDraft({ ...draft, folder: event.target.value || null })}
           >
-            <option value="">Unfiled</option>
+            <option value="">No collection</option>
             {folders.map((folder) => (
               <option key={folder.id} value={folder.id}>
                 {folder.emoji} {folder.name}
@@ -103,6 +141,7 @@ export default function Editor({ note, folders, onSave, onClose, onDelete }) {
             value={draft.mood}
             onChange={(event) => setDraft({ ...draft, mood: event.target.value })}
           >
+            <option value="">No mood</option>
             {['Peaceful', 'Inspired', 'Grateful', 'Thoughtful', 'Happy', 'Tired', 'Anxious'].map(
               (mood) => (
                 <option key={mood}>{mood}</option>
@@ -182,15 +221,15 @@ export default function Editor({ note, folders, onSave, onClose, onDelete }) {
               </button>
               <small>
                 {draft.body.trim() ? draft.body.trim().split(/\s+/).length : 0} words
-                <span> · {dirty ? 'Unsaved changes' : 'Ready to write'}</span>
+                <span> · {dirty ? 'Draft saves automatically' : 'Ready to write'}</span>
               </small>
               <button
                 className="primary-button"
                 onClick={() =>
                   onSave({
                     ...draft,
-                    emoji: draft.emoji || '📝',
-                    title: draft.title.trim() || 'Untitled entry',
+                    emoji: draft.emoji,
+                    title: draft.title.trim(),
                   })
                 }
               >

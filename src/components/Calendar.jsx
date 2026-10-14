@@ -1,3 +1,4 @@
+import CalendarCat from './CalendarCat';
 import React, { useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { dateKey } from '../data';
@@ -13,7 +14,8 @@ export default function Calendar({ month, setMonth, notes, openDate }) {
   }, [notes]);
   return (
     <section className="panel calendar-panel" aria-label="Journal calendar">
-      <div className="section-heading">
+      <div className="section-heading calendar-header-scene">
+        <CalendarCat />
         <div>
           <span className="eyebrow">MAKE A MOMENT</span>
           <h3>Your days, at a glance.</h3>
@@ -57,7 +59,7 @@ export default function Calendar({ month, setMonth, notes, openDate }) {
           return (
             <button
               key={key}
-              aria-label={`${date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}${entry ? `: ${entry.title}` : ': Add entry'}`}
+              aria-label={`${date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}${entry ? `: ${entry.title || 'Untitled'}` : ': Add entry'}`}
               aria-current={key === dateKey() ? 'date' : undefined}
               className={`calendar-day ${date.getMonth() !== currentMonth ? 'outside' : ''} ${key === dateKey() ? 'current-day' : ''}`}
               onClick={() => openDate(key)}

@@ -1,51 +1,100 @@
 import React, { useState } from 'react';
-import { Check, ShieldCheck, LockKeyhole } from 'lucide-react';
+import { Check, ShieldCheck, LockKeyhole, KeyRound, ChevronDown } from 'lucide-react';
 import Modal from './Modal';
 import EmojiPicker from './EmojiPicker';
-export default function Settings({ profile, onProfile, protectedByPin, setPin, onClose }) {
-  const [draft, setDraft] = useState(profile);
-  const [pin, setValue] = useState('');
-  const [confirmation, setConfirmation] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  async function protect(event) {
-    event.preventDefault();
+export default function Settings({
+  profile,
+  onProfile,
+  protectedByPin,
+  setPin,
+  recoveryQuestion,
+  configureRecovery,
+  disableRecovery,
+  onClose,
+}) {
+  const [draft, setDraft] = useState(profile),
+    [oldPin, setOldPin] = useState(''),
+    [pin, setValue] = useState(''),
+    [confirmation, setConfirmation] = useState('');
+  const [busy, setBusy] = useState(false),
+    [message, setMessage] = useState(''),
+    [error, setError] = useState('');
+  const [recoveryOpen, setRecoveryOpen] = useState(false),
+    [question, setQuestion] = useState(''),
+    [answer, setAnswer] = useState(''),
+    [answerAgain, setAnswerAgain] = useState(''),
+    [hint, setHint] = useState(''),
+    [recoveryPin, setRecoveryPin] = useState('');
+  async function run(action) {
     setError('');
     setMessage('');
-    if (pin !== confirmation) {
-      setError('The PINs don’t match. Try again.');
-      return;
-    }
     setBusy(true);
     try {
-      await setPin(pin);
-      setValue('');
-      setConfirmation('');
-      setMessage('PIN protection is on. Your workspace is encrypted on this device.');
+      await action();
     } catch (problem) {
       setError(problem.message);
     } finally {
       setBusy(false);
     }
   }
-  async function removePin() {
+  function protect(event) {
+    event.preventDefault();
+    if (pin !== confirmation) {
+      setError('The PINs don’t match. Try again.');
+      return;
+    }
+    run(async () => {
+      await setPin(pin, oldPin);
+      setValue('');
+      setConfirmation('');
+      setOldPin('');
+      setMessage('PIN protection is on. Your workspace is encrypted on this device.');
+    });
+  }
+  function removePin() {
+    if (!oldPin) {
+      setError('Enter your old PIN before turning off protection.');
+      return;
+    }
     if (
       !confirm(
-        'Turn off PIN protection? Workspace data will be stored without encryption on this device.',
+        'Turn off PIN protection and local recovery? Workspace data will be stored without encryption on this device.',
       )
     )
       return;
-    setBusy(true);
-    setError('');
-    try {
-      await setPin('');
+    run(async () => {
+      await setPin('', oldPin);
+      setOldPin('');
       setMessage('PIN protection is off.');
-    } catch (problem) {
-      setError(problem.message);
-    } finally {
-      setBusy(false);
+    });
+  }
+  function saveRecovery(event) {
+    event.preventDefault();
+    if (answer !== answerAgain) {
+      setError('Your recovery answers don’t match.');
+      return;
     }
+    run(async () => {
+      await configureRecovery({ question, answer, hint }, recoveryPin);
+      setAnswer('');
+      setAnswerAgain('');
+      setRecoveryPin('');
+      setRecoveryOpen(false);
+      setMessage('Local recovery is enabled. Keep your private answer somewhere safe.');
+    });
+  }
+  function removeRecovery() {
+    if (!recoveryPin) {
+      setError('Enter your current PIN to turn off recovery.');
+      return;
+    }
+    if (!confirm('Remove local recovery? You will need your PIN to open this device.')) return;
+    run(async () => {
+      await disableRecovery(recoveryPin);
+      setRecoveryPin('');
+      setRecoveryOpen(false);
+      setMessage('Local recovery is off.');
+    });
   }
   return (
     <Modal
@@ -56,15 +105,14 @@ export default function Settings({ profile, onProfile, protectedByPin, setPin, o
     >
       <div className="settings-content">
         <div className="settings-intro">
-          <span className="eyebrow">PERSONALIZE STILL</span>
+          <span className="eyebrow">PERSONALIZE YOUR SANCTUARY</span>
           <h2>Make yourself at home.</h2>
-          <p>A workspace that feels like you.</p>
         </div>
         <form
           className="settings-section"
           onSubmit={(event) => {
             event.preventDefault();
-            onProfile({ ...draft, name: draft.name.trim() });
+            onProfile({ ...draft, name: draft.name.trim(), avatar: draft.avatar || '✦' });
             setMessage('Your profile has been updated.');
           }}
         >
@@ -76,7 +124,7 @@ export default function Settings({ profile, onProfile, protectedByPin, setPin, o
             />
             <div>
               <strong>Your avatar</strong>
-              <p>Pick an emoji that feels like you.</p>
+              <p>A little reflection of you.</p>
             </div>
           </div>
           <label>
@@ -103,19 +151,30 @@ export default function Settings({ profile, onProfile, protectedByPin, setPin, o
               {protectedByPin ? 'Protected' : 'Optional'}
             </span>
           </div>
-          <p>
-            Lock Still on startup with a 6–12 digit PIN. Your journal, tasks, habits, and profile
-            are encrypted in this browser. A longer PIN is stronger.
-          </p>
-          <p className="security-note">
-            There is no PIN recovery. This protects stored data, but cannot protect an unlocked
-            session or a compromised device. Keep a private backup of important writing.
-          </p>
+          <p>One PIN protects all your spaces. Your writing stays encrypted on this device.</p>
           <form onSubmit={protect} className="pin-form">
+            {protectedByPin && (
+              <label className="field-label">
+                Old PIN
+                <input
+                  disabled={busy}
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="current-password"
+                  minLength={6}
+                  maxLength={12}
+                  required
+                  value={oldPin}
+                  onChange={(event) => setOldPin(event.target.value.replace(/\D/g, ''))}
+                  placeholder="Your current PIN"
+                />
+              </label>
+            )}
             <div className="form-row">
               <label>
                 {protectedByPin ? 'New PIN' : 'Create PIN'}
                 <input
+                  disabled={busy}
                   type="password"
                   inputMode="numeric"
                   autoComplete="new-password"
@@ -131,6 +190,7 @@ export default function Settings({ profile, onProfile, protectedByPin, setPin, o
               <label>
                 Confirm PIN
                 <input
+                  disabled={busy}
                   type="password"
                   inputMode="numeric"
                   autoComplete="new-password"
@@ -161,6 +221,121 @@ export default function Settings({ profile, onProfile, protectedByPin, setPin, o
             </div>
           </form>
         </div>
+        {protectedByPin && (
+          <section className="settings-section recovery-settings">
+            <div className="security-title">
+              <KeyRound size={21} />
+              <h3>Local recovery</h3>
+              <span className={`security-badge ${recoveryQuestion ? 'enabled' : ''}`}>
+                {recoveryQuestion ? 'Enabled' : 'Not set'}
+              </span>
+            </div>
+            <p>
+              A question to guide you back. A private answer to unlock your vault. No email or
+              server needed.
+            </p>
+            {recoveryQuestion && (
+              <div className="recovery-question-preview">{recoveryQuestion}</div>
+            )}
+            <button
+              type="button"
+              disabled={busy}
+              className="secondary-button recovery-open"
+              aria-expanded={recoveryOpen}
+              onClick={() => setRecoveryOpen(!recoveryOpen)}
+            >
+              {recoveryQuestion ? 'Manage recovery' : 'Set up local recovery'}
+              <ChevronDown size={16} />
+            </button>
+            {recoveryOpen && (
+              <form className="recovery-form" onSubmit={saveRecovery}>
+                <p className="security-note">
+                  Your question and hint are visible while locked. Use a private answer or phrase
+                  with at least 12 characters, not a publicly known fact. Answers are
+                  case-sensitive. Clearing browser storage removes the vault and its recovery copy.
+                </p>
+                <label>
+                  Current PIN for recovery
+                  <input
+                    disabled={busy}
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="current-password"
+                    minLength={6}
+                    maxLength={12}
+                    required
+                    value={recoveryPin}
+                    onChange={(event) => setRecoveryPin(event.target.value.replace(/\D/g, ''))}
+                  />
+                </label>
+                <label>
+                  Recovery question
+                  <input
+                    disabled={busy}
+                    required
+                    maxLength={200}
+                    value={question}
+                    onChange={(event) => setQuestion(event.target.value)}
+                    placeholder="A prompt only you can answer privately"
+                  />
+                </label>
+                <label>
+                  Private recovery answer
+                  <input
+                    disabled={busy}
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={12}
+                    maxLength={256}
+                    value={answer}
+                    onChange={(event) => setAnswer(event.target.value)}
+                    placeholder="A memorable secret phrase"
+                  />
+                </label>
+                <label>
+                  Confirm recovery answer
+                  <input
+                    disabled={busy}
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={12}
+                    maxLength={256}
+                    value={answerAgain}
+                    onChange={(event) => setAnswerAgain(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Hint (optional, visible while locked)
+                  <input
+                    disabled={busy}
+                    maxLength={200}
+                    value={hint}
+                    onChange={(event) => setHint(event.target.value)}
+                    placeholder="A gentle clue, never your answer"
+                  />
+                </label>
+                <div className="settings-actions">
+                  <button type="submit" className="primary-button" disabled={busy}>
+                    <KeyRound size={17} />
+                    {busy ? 'Securing…' : 'Save local recovery'}
+                  </button>
+                  {recoveryQuestion && (
+                    <button
+                      type="button"
+                      className="text-button danger"
+                      disabled={busy}
+                      onClick={removeRecovery}
+                    >
+                      Remove recovery
+                    </button>
+                  )}
+                </div>
+              </form>
+            )}
+          </section>
+        )}
         {message && (
           <p className="success-message" role="status">
             {message}

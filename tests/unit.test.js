@@ -102,3 +102,48 @@ test('workspace validation rejects malformed records and cyclic folders without 
   );
   assert.deepEqual(validateWorkspace(emptyWorkspace()), emptyWorkspace());
 });
+
+test('sanctuary migration preserves old data and keeps Personal and Work independent', async () => {
+  const { normalizeSanctuary, taskSection, taskComplete } = await import('../src/data.js');
+  const old = { ...emptyWorkspace(), notes: [{ id: 'owned', body: 'My original writing' }] };
+  const migrated = normalizeSanctuary(old);
+  assert.equal(migrated.spaces[0].notes[0].body, 'My original writing');
+  assert.deepEqual(migrated.spaces[1].notes, []);
+  assert.notEqual(migrated.spaces[0].tasks, migrated.spaces[1].tasks);
+  assert.equal(taskSection({ due: '2026-10-17' }, '2026-10-15'), 'upcoming');
+  assert.equal(taskSection({ repeat: true, due: '' }, '2026-10-15'), 'daily');
+  assert.equal(taskSection({ due: '2026-10-14' }, '2026-10-15'), 'today');
+  const repeating = { repeat: true, completedDates: ['2026-10-15'] };
+  assert.equal(taskComplete(repeating, '2026-10-15'), true);
+  assert.equal(taskComplete(repeating, '2026-10-16'), false);
+});
+
+test('local recovery never stores the answer, rejects incorrect answers and decrypts the latest vault', async () => {
+  const { createLocalRecovery, unlockRecovery } = await import('../src/lib/vault.js');
+  const { normalizeSanctuary } = await import('../src/data.js');
+  const answer = 'Only I remember the silver river.';
+  const recovery = await createLocalRecovery(
+    'What private phrase takes me home?',
+    answer,
+    'A river, not a place',
+  );
+  assert.equal(JSON.stringify(recovery).includes(answer), false);
+  const data = { ...normalizeSanctuary(emptyWorkspace()), recovery };
+  const credentials = await createCredentials('831702');
+  const envelope = await seal(data, credentials);
+  assert.equal(envelope.recovery.question, 'What private phrase takes me home?');
+  assert.equal(JSON.stringify(envelope).includes(recovery.key), false);
+  assert.equal(JSON.stringify(envelope).includes(answer), false);
+  await assert.rejects(() => unlockRecovery(envelope.recovery, 'A completely different answer'));
+  assert.deepEqual(await unlockRecovery(envelope.recovery, answer), data);
+  data.profile.name = 'Written after configuring recovery';
+  const latest = await seal(data, credentials);
+  assert.equal((await unlockRecovery(latest.recovery, answer)).profile.name, data.profile.name);
+  await assert.rejects(() => createLocalRecovery('Question', 'short', 'hint'));
+  await assert.rejects(() =>
+    unlockRecovery(
+      { ...envelope.recovery, wrappedKey: { ...envelope.recovery.wrappedKey, ciphertext: 'AAAA' } },
+      answer,
+    ),
+  );
+});

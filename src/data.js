@@ -84,3 +84,48 @@ export function migrateLegacy(storage) {
   }));
   return result;
 }
+
+export function normalizeSanctuary(data) {
+  if (data.spaces)
+    return {
+      ...data,
+      spaces: data.spaces.map((space) => ({ ...space, drafts: space.drafts || [] })),
+    };
+  return {
+    profile: data.profile,
+    activeSpaceId: 'personal',
+    spaces: [
+      {
+        id: 'personal',
+        name: 'Personal',
+        emoji: '🌿',
+        drafts: [],
+        notes: data.notes,
+        folders: data.folders,
+        tasks: data.tasks,
+        habits: data.habits,
+      },
+      {
+        id: 'work',
+        name: 'Work',
+        emoji: '☕',
+        drafts: [],
+        notes: [],
+        folders: [],
+        tasks: [],
+        habits: [],
+      },
+    ],
+    recovery: null,
+  };
+}
+
+export function taskSection(task, today = dateKey()) {
+  if (task.repeat) return 'daily';
+  if (task.due && task.due > today) return 'upcoming';
+  return 'today';
+}
+
+export function taskComplete(task, today = dateKey()) {
+  return task.repeat ? (task.completedDates || []).includes(today) : task.status === 'Done';
+}

@@ -5,6 +5,7 @@ import EmptyState from './EmptyState';
 import { collectionIds } from '../data';
 export default function JournalView({
   notes,
+  drafts = [],
   openNote,
   openDate,
   newNote,
@@ -68,6 +69,28 @@ export default function JournalView({
         </button>
       </div>
       <Calendar month={month} setMonth={setMonth} notes={notes} openDate={openDate} />
+      {drafts.length > 0 && (
+        <section className="draft-tray" aria-label="Journal drafts">
+          <div>
+            <h3>Pick up where you left off.</h3>
+            <span>
+              {drafts.length} {drafts.length === 1 ? 'draft' : 'drafts'}
+            </span>
+          </div>
+          <div className="draft-cards">
+            {drafts.map((draft) => (
+              <button className="draft-card" key={draft.id} onClick={() => openNote(draft)}>
+                <span>{draft.emoji || '✎'}</span>
+                <div>
+                  <strong>{draft.title || 'Untitled draft'}</strong>
+                  <p>{draft.body || 'A quiet blank page.'}</p>
+                </div>
+                <ArrowRight size={17} />
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="entries-heading">
         <div>
           <h2>
@@ -110,7 +133,9 @@ export default function JournalView({
         {shown.map((note) => (
           <button key={note.id} className="entry-card" onClick={() => openNote(note)}>
             <div className="entry-top">
-              <span className="entry-icon">{note.emoji}</span>
+              <span className="entry-icon">
+                {note.emoji || <BookOpen size={23} strokeWidth={1.3} />}
+              </span>
               <ArrowUpRight size={18} />
             </div>
             <small>
@@ -122,7 +147,7 @@ export default function JournalView({
                   })
                 : 'UNDATED THOUGHT'}
             </small>
-            <h3>{note.title || 'Untitled entry'}</h3>
+            <h3>{note.title || 'Untitled'}</h3>
             <p>{note.body || 'A moment, made your own.'}</p>
             <div className="entry-footer">
               <span>

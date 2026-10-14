@@ -1,3 +1,4 @@
+import WorkspaceSwitcher from './WorkspaceSwitcher';
 import React, { useState } from 'react';
 import {
   BookOpen,
@@ -28,6 +29,9 @@ const NAV = [
   ['Habits', ChartNoAxesColumnIncreasing],
 ];
 export default function Sidebar({
+  spaces,
+  activeSpaceId,
+  onSwitchSpace,
   view,
   setView,
   folders,
@@ -151,8 +155,8 @@ export default function Sidebar({
           if (innerWidth < 850) setCollapsed(true);
         }}
       >
-        <span>{note.emoji}</span>
-        <span>{note.title}</span>
+        <span>{note.emoji || '·'}</span>
+        <span>{note.title || 'Untitled'}</span>
       </button>
     );
   }
@@ -287,6 +291,12 @@ export default function Sidebar({
             >
               <PanelLeftOpen size={21} />
             </button>
+            <WorkspaceSwitcher
+              spaces={spaces}
+              activeSpaceId={activeSpaceId}
+              onSwitch={onSwitchSpace}
+              compact
+            />
             <span className="collapsed-separator" />
             {NAV.map(([name, Icon]) => (
               <button
@@ -330,18 +340,11 @@ export default function Sidebar({
                 <PanelLeftClose size={19} />
               </button>
             </div>
-            <button
-              className="workspace-switch"
-              aria-label="Personalize workspace"
-              onClick={openSettings}
-            >
-              <span className="avatar tiny">{profile.avatar}</span>
-              <span>
-                {profile.name ? `${profile.name.split(' ')[0]}’s space` : 'Your personal space'}
-                <small>Make room for what matters</small>
-              </span>
-              <ChevronDown size={15} />
-            </button>
+            <WorkspaceSwitcher
+              spaces={spaces}
+              activeSpaceId={activeSpaceId}
+              onSwitch={onSwitchSpace}
+            />
             <button className="search-button" aria-label="Search workspace" onClick={openSearch}>
               <Search size={18} />
               <span>Search workspace</span>

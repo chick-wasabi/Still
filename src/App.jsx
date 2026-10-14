@@ -1,5 +1,6 @@
+import SanctuaryScene from './components/SanctuaryScene';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { motion, MotionConfig, useReducedMotion } from 'framer-motion';
+import { motion, MotionConfig, useReducedMotion, AnimatePresence } from 'framer-motion';
 import {
   ChevronRight,
   Search,
@@ -23,8 +24,7 @@ import LockScreen from './components/LockScreen';
 import useWorkspace from './hooks/useWorkspace';
 import { dateKey } from './data';
 
-export default function App() {
-  const workspace = useWorkspace();
+function Workspace({ workspace }) {
   const { data, update, locked, unlock, lock, protectedByPin, setPin, error, status } = workspace;
   const [view, setView] = useState('Journal');
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 850);
@@ -40,6 +40,18 @@ export default function App() {
   const setFolders = useCallback((next) => update('folders', next), [update]);
   const setTasks = useCallback((next) => update('tasks', next), [update]);
   const setHabits = useCallback((next) => update('habits', next), [update]);
+  const saveDraft = useCallback(
+    (note) =>
+      update('drafts', (current) => [
+        ...(current || []).filter((item) => item.id !== note.id),
+        note,
+      ]),
+    [update],
+  );
+  const clearDraft = useCallback(
+    (id) => update('drafts', (current) => (current || []).filter((item) => item.id !== id)),
+    [update],
+  );
 
   useEffect(() => {
     const keydown = (event) => {
@@ -88,16 +100,15 @@ export default function App() {
     if (!data) return { notes: [], tasks: [] };
     const value = query.toLocaleLowerCase().trim();
     return {
-      notes: data.notes.filter((note) =>
-        `${note.title} ${note.body}`.toLocaleLowerCase().includes(value),
-      ),
+      notes: [
+        ...new Map([...data.notes, ...(data.drafts || [])].map((note) => [note.id, note])).values(),
+      ].filter((note) => `${note.title} ${note.body}`.toLocaleLowerCase().includes(value)),
       tasks: data.tasks.filter((task) =>
         `${task.title} ${task.description}`.toLocaleLowerCase().includes(value),
       ),
     };
   }, [data, query]);
 
-  if (locked) return <LockScreen onUnlock={unlock} />;
   if (!data)
     return (
       <div className="recovery-screen">
@@ -114,20 +125,22 @@ export default function App() {
       </div>
     );
   const { notes, folders, tasks, habits, profile } = data;
+  const drafts = data.drafts || [];
+  const openNote = (note) => setEditor(drafts.find((item) => item.id === note.id) || note);
   function newNote(date = dateKey()) {
     setEditor({
       id: crypto.randomUUID(),
       title: '',
       body: '',
-      emoji: date ? '📝' : '💭',
+      emoji: '',
       date,
-      folder: folder || null,
-      mood: 'Thoughtful',
+      folder: null,
+      mood: '',
     });
   }
   function openDate(date) {
     const entry = notes.find((note) => note.date === date);
-    if (entry) setEditor(entry);
+    if (entry) openNote(entry);
     else newNote(date);
   }
   const saveNote = (note) => {
@@ -136,14 +149,23 @@ export default function App() {
         ? current.map((item) => (item.id === note.id ? note : item))
         : [note, ...current],
     );
+    clearDraft(note.id);
     setEditor(null);
     setToast('Entry added to your workspace.');
   };
   return (
     <MotionConfig reducedMotion="user">
-      <div className="app-shell">
+      <div className="app-shell sanctuary-app">
+        <SanctuaryScene />
         <div className="workspace-shell">
           <Sidebar
+            spaces={workspace.spaces}
+            activeSpaceId={workspace.activeSpaceId}
+            onSwitchSpace={(id) => {
+              workspace.switchSpace(id);
+              setFolder(null);
+              setView('Journal');
+            }}
             {...{
               view,
               setView,
@@ -158,7 +180,7 @@ export default function App() {
               profile,
               protectedByPin,
             }}
-            openNote={setEditor}
+            openNote={openNote}
             openSearch={() => setSearch(true)}
             openSettings={() => setSettings(true)}
             onLock={lockWorkspace}
@@ -166,7 +188,10 @@ export default function App() {
           <div className="main-shell">
             <header className="topbar">
               <div className="breadcrumbs">
-                <span>Personal workspace</span>
+                <span>
+                  {workspace.spaces.find((space) => space.id === workspace.activeSpaceId)?.name}{' '}
+                  workspace
+                </span>
                 <ChevronRight size={14} />
                 <strong>{view}</strong>
               </div>
@@ -215,15 +240,15 @@ export default function App() {
             <main id="main-content">
               <motion.div
                 className="page-transition"
-                key={view}
+                key={`${workspace.activeSpaceId}-${view}`}
                 initial={reduced ? false : { opacity: 0.8, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
               >
                 {view === 'Journal' ? (
                   <JournalView
-                    {...{ notes, folder, folders, openDate, profile }}
-                    openNote={setEditor}
+                    {...{ notes, folder, folders, openDate, profile, drafts }}
+                    openNote={openNote}
                     newNote={() => newNote()}
                     openSettings={() => setSettings(true)}
                   />
@@ -262,8 +287,11 @@ export default function App() {
             folders={folders}
             onClose={() => setEditor(null)}
             onSave={saveNote}
+            onDraftChange={saveDraft}
+            onDiscard={() => clearDraft(editor.id)}
             onDelete={(id) => {
               setNotes((current) => current.filter((note) => note.id !== id));
+              clearDraft(id);
               setEditor(null);
               setToast('Entry deleted.');
             }}
@@ -274,6 +302,9 @@ export default function App() {
             profile={profile}
             onProfile={(next) => update('profile', next)}
             {...{ protectedByPin, setPin }}
+            recoveryQuestion={workspace.recoveryQuestion}
+            configureRecovery={workspace.configureRecovery}
+            disableRecovery={workspace.disableRecovery}
             onClose={() => setSettings(false)}
           />
         )}
@@ -305,12 +336,12 @@ export default function App() {
                     key={note.id}
                     onClick={() => {
                       setSearch(false);
-                      setEditor(note);
+                      openNote(note);
                     }}
                   >
                     <span>{note.emoji}</span>
                     <div>
-                      {note.title}
+                      {note.title || 'Untitled'}
                       <small>Journal · {note.date || 'Scratchpad'}</small>
                     </div>
                     <ArrowUpRight size={17} />
@@ -356,6 +387,44 @@ export default function App() {
           </div>
         )}
       </div>
+    </MotionConfig>
+  );
+}
+
+export default function App() {
+  const workspace = useWorkspace();
+  const reduced = useReducedMotion();
+  return (
+    <MotionConfig reducedMotion="user">
+      <AnimatePresence initial={false}>
+        {workspace.locked ? (
+          <motion.div
+            key="lock"
+            className="lock-layer"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: reduced ? 1 : 1.025 }}
+            transition={{ duration: reduced ? 0 : 0.65, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <LockScreen
+              onUnlock={workspace.unlock}
+              onRecover={workspace.recover}
+              recoveryAvailable={workspace.recoveryAvailable}
+              recoveryPrompt={workspace.recoveryPrompt}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="workspace"
+            initial={reduced ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduced ? 0 : 0.5 }}
+          >
+            <Workspace workspace={workspace} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </MotionConfig>
   );
 }
