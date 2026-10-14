@@ -233,13 +233,25 @@ test('procedural cat has a bound skeleton, reusable material groups, and distinc
   const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
   const model = createCatModel();
   assert.equal(model.mesh.isSkinnedMesh, true);
-  assert.ok(model.standingHeight * 28 < 44, 'standing kitten stays below two body-text lines');
+  assert.ok(
+    Math.abs(model.standingHeight * 40 - 45) < 0.01,
+    'standing kitten is calibrated to 45px',
+  );
   assert.ok(model.bones.length >= 30);
   assert.ok(
     model.mesh.geometry.groups.length <= 7,
     'parts sharing material should batch into one draw',
   );
+  assert.ok(model.mesh.material[0].map?.isDataTexture, 'tabby fur is textured');
+  assert.ok(
+    model.mesh.material[0].normalMap?.isDataTexture,
+    'fine fur has a shared normal texture',
+  );
   const weights = model.mesh.geometry.attributes.skinWeight;
+  assert.ok(
+    Array.from({ length: weights.count }, (_, i) => weights.getY(i)).some((w) => w > 0 && w < 1),
+    'limbs and tail blend between bones',
+  );
   for (let i = 0; i < weights.count; i++)
     assert.ok(
       Math.abs(weights.getX(i) + weights.getY(i) + weights.getZ(i) + weights.getW(i) - 1) < 1e-7,
@@ -294,7 +306,7 @@ test('document coordinates stay stable as content grows and a render window scro
   );
 });
 
-async function petPhysicsFixture(offset = 0) {
+async function petPhysicsFixture(offset = 0, randomizeSpawn = false) {
   const R = await import('@dimforge/rapier3d-compat');
   await R.init();
   const { createDirector } = await import('../src/lib/pet3d/director.js');
@@ -338,6 +350,7 @@ async function petPhysicsFixture(offset = 0) {
   };
   const input = createPetInput(),
     modes = [];
+  input.ballEnabled = true;
   const ai = createDirector({
     cat,
     ball,
@@ -346,6 +359,7 @@ async function petPhysicsFixture(offset = 0) {
     input,
     layout: () => layout,
     notify: (mode) => modes.push(mode),
+    randomizeSpawn,
   });
   ai.initialize();
   function step(count = 1) {
@@ -433,7 +447,7 @@ test('scratching decorates text briefly and heals without modifying its content'
     for (let i = 0; i < 360 && !f.attributes.has('data-pet-scratched'); i++) f.step();
     assert.ok(f.attributes.has('data-pet-scratched'));
     assert.equal(f.text.textContent, 'Your journal');
-    await new Promise((resolve) => setTimeout(resolve, 750));
+    await new Promise((resolve) => setTimeout(resolve, 900));
     assert.equal(f.attributes.has('data-pet-scratched'), false);
     assert.equal(f.text.textContent, 'Your journal');
   } finally {
@@ -460,6 +474,70 @@ test('dragging a CCD toy through the cat cannot impart a kinematic launch impuls
     assert.equal(f.ball.collider(0).collisionGroups(), groups);
     assert.ok(Math.abs(f.cat.translation().x - p.x) < 0.05);
   } finally {
+    f.dispose();
+  }
+});
+
+test('motion preferences default the ball off and preserve each independent toggle', async () => {
+  const { readMotionPreferences } = await import('../src/hooks/useMotionPreferences.js');
+  const read = (value) => readMotionPreferences({ getItem: () => value });
+  assert.deepEqual(read(null), { catEnabled: true, ballEnabled: false });
+  assert.deepEqual(read('{"catEnabled":false,"ballEnabled":true}'), {
+    catEnabled: false,
+    ballEnabled: true,
+  });
+  assert.deepEqual(read('{"catEnabled":true}'), { catEnabled: true, ballEnabled: false });
+  assert.deepEqual(read('corrupt'), { catEnabled: true, ballEnabled: false });
+});
+
+test('refresh spawn selection varies both pose and safe physical location', async () => {
+  const original = Math.random,
+    modes = new Set(),
+    positions = new Set();
+  try {
+    for (const n of [0.01, 0.19, 0.36, 0.52, 0.7, 0.91]) {
+      Math.random = () => n;
+      const f = await petPhysicsFixture(0, true);
+      modes.add(f.input.spawnBehavior);
+      positions.add(f.cat.translation().x.toFixed(2));
+      f.dispose();
+    }
+    assert.ok(modes.size >= 5);
+    assert.ok(positions.size >= 5);
+  } finally {
+    Math.random = original;
+  }
+});
+
+test('turning the toy off removes its body from play while keeping the cat active', async () => {
+  const f = await petPhysicsFixture();
+  try {
+    f.input.ballEnabled = false;
+    f.ai.syncActors();
+    f.step(30);
+    assert.equal(f.ball.isEnabled(), false);
+    assert.equal(f.ball.collider(0).collisionGroups(), 0);
+    assert.equal(f.cat.isEnabled(), true);
+    assert.equal(f.input.carryingBall, false);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a thrown toy earns a bounded play session before ordinary cat behavior resumes', async () => {
+  const f = await petPhysicsFixture(),
+    original = Math.random;
+  try {
+    Math.random = () => 0.95;
+    f.input.ballMoved = true;
+    f.step();
+    assert.equal(f.ai.playingBall, true);
+    f.step(11 * 60);
+    assert.equal(f.ai.playingBall, false);
+    assert.equal(f.input.ballEnabled, true, 'finishing play leaves the ball available');
+    assert.equal(f.ball.isEnabled(), true);
+  } finally {
+    Math.random = original;
     f.dispose();
   }
 });

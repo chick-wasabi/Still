@@ -1,23 +1,29 @@
 import { useState } from 'react';
 const KEY = 'still-motion-preferences';
+export function readMotionPreferences(storage = localStorage) {
+  try {
+    const saved = JSON.parse(storage.getItem(KEY));
+    return { catEnabled: saved?.catEnabled !== false, ballEnabled: saved?.ballEnabled === true };
+  } catch {
+    return { catEnabled: true, ballEnabled: false };
+  }
+}
 export default function useMotionPreferences() {
-  const [catEnabled, setCat] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(KEY))?.catEnabled !== false;
-    } catch {
-      return true;
-    }
-  });
-  function toggleCat() {
-    setCat((current) => {
-      const next = !current;
+  const [preferences, setPreferences] = useState(readMotionPreferences);
+  function toggle(key) {
+    setPreferences((current) => {
+      const next = { ...current, [key]: !current[key] };
       try {
-        localStorage.setItem(KEY, JSON.stringify({ catEnabled: next }));
+        localStorage.setItem(KEY, JSON.stringify(next));
       } catch {
-        /* Motion controls remain usable when storage is full. */
+        /* Controls still work with full storage. */
       }
       return next;
     });
   }
-  return { catEnabled, toggleCat };
+  return {
+    ...preferences,
+    toggleCat: () => toggle('catEnabled'),
+    toggleBall: () => toggle('ballEnabled'),
+  };
 }

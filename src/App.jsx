@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useState, useLayoutEffect } fro
 import { motion, MotionConfig, AnimatePresence } from 'framer-motion';
 import {
   Cat,
+  CircleDot,
   ChevronRight,
   Search,
   Plus,
@@ -31,7 +32,7 @@ import { dateKey } from './data';
 function Workspace({ workspace }) {
   const { data, update, locked, unlock, lock, protectedByPin, setPin, error, status } = workspace;
   const [view, setView] = useState('Journal');
-  const { catEnabled, toggleCat } = useMotionPreferences();
+  const { catEnabled, ballEnabled, toggleCat, toggleBall } = useMotionPreferences();
   useLayoutEffect(() => {
     document.documentElement.dataset.workspaceTheme =
       workspace.activeSpaceId === 'work' ? 'work' : 'personal';
@@ -173,7 +174,7 @@ function Workspace({ workspace }) {
         data-view={view}
       >
         <SanctuaryScene journal={view === 'Journal'} />
-        <div className="workspace-shell">
+        <div className="workspace-shell pet3d-host">
           <Sidebar
             spaces={workspace.spaces}
             activeSpaceId={workspace.activeSpaceId}
@@ -220,6 +221,16 @@ function Workspace({ workspace }) {
                   onClick={toggleCat}
                 >
                   <Cat size={19} />
+                  <span className="companion-toggle-dot" />
+                </button>
+                <button
+                  className="icon-button companion-toggle ball-toggle"
+                  aria-label={ballEnabled ? 'Hide play ball' : 'Show play ball'}
+                  aria-pressed={ballEnabled}
+                  title={ballEnabled ? 'Put the yarn ball away' : 'Play ball'}
+                  onClick={toggleBall}
+                >
+                  <CircleDot size={19} />
                   <span className="companion-toggle-dot" />
                 </button>
                 <span
@@ -293,13 +304,14 @@ function Workspace({ workspace }) {
                   Make it yours
                 </button>
               </footer>
-              <PetCompanion
-                enabled={catEnabled}
-                suspended={Boolean(editor || settings || search)}
-                layoutKey={`${workspace.activeSpaceId}-${view}`}
-              />
             </main>
           </div>
+          <PetCompanion
+            enabled={catEnabled}
+            ballEnabled={ballEnabled}
+            suspended={Boolean(editor || settings || search)}
+            layoutKey={`${workspace.activeSpaceId}-${view}`}
+          />
           <button
             className="floating-add"
             aria-label="Add a scratchpad thought"

@@ -39,7 +39,7 @@ class RenderBoundary extends Component {
     return this.state.failed ? this.props.fallback : this.props.children;
   }
 }
-function Companion({ suspended, layoutKey }) {
+function Companion({ enabled, ballEnabled, suspended, layoutKey }) {
   const layer = useRef(null),
     input = useMemo(createPetInput, []),
     reduced = useReducedMotion();
@@ -67,13 +67,18 @@ function Companion({ suspended, layoutKey }) {
     [onFailure],
   );
   useLayoutEffect(() => {
+    input.catEnabled = enabled;
+    input.ballEnabled = ballEnabled;
     input.paused = paused;
     input.reduced = reduced;
-    if (paused || reduced) restoreNativeCursor(input);
+    if (paused || reduced || !enabled) {
+      restoreNativeCursor(input);
+      input.restoreMischief?.();
+    }
     return () => restoreNativeCursor(input);
-  }, [input, paused, reduced]);
+  }, [input, paused, reduced, enabled, ballEnabled]);
   useEffect(() => {
-    const host = layer.current.closest('#main-content');
+    const host = layer.current.closest('.pet3d-host');
     input.host = host;
     const stop = observeDomWorld(host, (next) => setLayout({ ...next, pageKey: layoutKey }));
     const stopRaster = observeRenderWindow(host, setRaster);
@@ -142,6 +147,8 @@ function Companion({ suspended, layoutKey }) {
       data-paused={paused}
       data-reduced={reduced}
       data-physics="rapier"
+      data-cat-enabled={enabled}
+      data-ball-enabled={ballEnabled}
       aria-label="3D companion"
     >
       {!unavailable && supported && layout && raster && (
@@ -162,36 +169,49 @@ function Companion({ suspended, layoutKey }) {
           </RenderBoundary>
         </div>
       )}
+      <span className="pet3d-bubble" aria-hidden="true" />
+      <span className="pet3d-letter" aria-hidden="true" />
       {unavailable && fallback}
       {ready && !paused && (
         <div className="pet3d-controls" aria-label="Companion controls">
-          <button
-            className="pet3d-control"
-            aria-label="Pet 3D cat"
-            title="Pet your cat · Drag the cat to toss it"
-            disabled={reduced}
-            onClick={() => {
-              input.command = 'pet';
-            }}
-          >
-            <Cat size={17} />
-          </button>
-          <button
-            className="pet3d-control"
-            aria-label="Toss toy ball"
-            title="Toss the ball · You can also drag and throw it"
-            disabled={reduced}
-            onClick={() => {
-              input.command = 'ball';
-            }}
-          >
-            <CircleDot size={17} />
-          </button>
+          {enabled && (
+            <button
+              className="pet3d-control"
+              aria-label="Pet 3D cat"
+              title="Pet your cat · Drag the cat to toss it"
+              disabled={reduced}
+              onClick={() => {
+                input.command = 'pet';
+              }}
+            >
+              <Cat size={17} />
+            </button>
+          )}
+          {ballEnabled && (
+            <button
+              className="pet3d-control"
+              aria-label="Toss toy ball"
+              title="Toss the ball · You can also drag and throw it"
+              disabled={reduced}
+              onClick={() => {
+                input.command = 'ball';
+              }}
+            >
+              <CircleDot size={17} />
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
-export default memo(function PetCompanion({ enabled = true, suspended = false, layoutKey = '' }) {
-  return enabled ? <Companion {...{ suspended, layoutKey }} /> : null;
+export default memo(function PetCompanion({
+  enabled = true,
+  ballEnabled = false,
+  suspended = false,
+  layoutKey = '',
+}) {
+  return enabled || ballEnabled ? (
+    <Companion {...{ enabled, ballEnabled, suspended, layoutKey }} />
+  ) : null;
 });

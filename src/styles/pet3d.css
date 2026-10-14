@@ -1,11 +1,11 @@
-#main-content {
+.pet3d-host {
   position: relative;
 }
 /* The renderer never consumes HTML pointer events; only raycast hits initiate a drag. */
 .pet3d-layer {
   position: absolute;
   inset: 0;
-  z-index: 20;
+  z-index: 65;
   pointer-events: none;
   overflow: hidden;
   contain: layout style;
@@ -22,7 +22,7 @@
 }
 .pet3d-controls {
   position: absolute;
-  top: 12px;
+  top: 92px;
   right: 24px;
   display: flex;
   gap: 5px;
@@ -63,7 +63,7 @@
 .pet3d-unavailable {
   position: absolute;
   right: 24px;
-  top: 12px;
+  top: 92px;
   max-width: min(360px, calc(100vw - 40px));
   padding: 12px 15px;
   display: flex;
@@ -86,8 +86,8 @@
   background: none;
   cursor: pointer;
 }
-html[data-pet-cursor='true'] #main-content,
-html[data-pet-cursor='true'] #main-content * {
+html[data-pet-cursor='true'] .pet3d-host,
+html[data-pet-cursor='true'] .pet3d-host * {
   cursor: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -123,4 +123,41 @@ html[data-pet-cursor='true'] #main-content * {
   [data-pet-scratched] {
     animation: none;
   }
+}
+
+.pet3d-bubble,
+.pet3d-letter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  display: none;
+  will-change: transform;
+  contain: layout style;
+}
+.pet3d-bubble {
+  padding: 5px 10px;
+  border: 1px solid #e3cfa43b;
+  border-radius: 12px 12px 12px 3px;
+  background: #17231ded;
+  color: #efe5cf;
+  font-size: 12px;
+  line-height: 1.3;
+  box-shadow: 0 3px 14px #0002;
+}
+.pet3d-letter {
+  color: #f3dab0;
+  font-size: 19px;
+  font-weight: 600;
+  text-shadow: 0 0 8px #dfb76e66;
+}
+::highlight(still-cat-letter) {
+  color: transparent;
+  text-shadow: none;
+}
+::highlight(still-cat-scratch) {
+  text-decoration: line-through;
+  text-decoration-color: #dfbf8c;
+  text-decoration-thickness: 2px;
+  color: #d8c6a4;
 }

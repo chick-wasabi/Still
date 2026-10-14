@@ -131,6 +131,7 @@ function Actors({ layout, input, layer, onReady }) {
   const cat = useRef(),
     ball = useRef(),
     ballMesh = useRef(),
+    ballVisual = useRef(),
     visual = useRef(),
     cursor = useRef(),
     director = useRef();
@@ -155,6 +156,7 @@ function Actors({ layout, input, layer, onReady }) {
   const { world, rapier } = useRapier();
   const { camera, scene, invalidate, gl, setDpr } = useThree();
   const mouth = useMemo(() => new THREE.Vector3(), []);
+  const petPoint = useMemo(() => new THREE.Vector3(), []);
   const cursorPoint = useMemo(() => new THREE.Vector3(), []);
   const frameStats = useRef({ frames: 0, total: 0, telemetry: 0, dpr: 1 });
   useEffect(() => {
@@ -208,24 +210,35 @@ function Actors({ layout, input, layer, onReady }) {
   }, [camera, scene, gl, world, rapier, input, model, invalidate, onReady, layer]);
   useEffect(() => () => model.dispose(), [model]);
   useEffect(() => {
+    director.current?.syncActors();
     if (input.reduced && director.current && visual.current && ballMesh.current) {
       director.current.reconcile();
       const c = cat.current.translation(),
         b = ball.current.translation();
       visual.current.parent.position.set(c.x, c.y, c.z);
-      ballMesh.current.parent.position.set(b.x, b.y, b.z);
+      ballVisual.current.parent.position.set(b.x, b.y, b.z);
       input.grounded = true;
       if (layer.current) layer.current.dataset.behavior = 'sleep';
       invalidate();
     } else if (layer.current) layer.current.dataset.behavior = input.mode;
-  }, [input.reduced, layout.revision, input, layer, invalidate]);
+  }, [
+    input.catEnabled,
+    input.ballEnabled,
+    input.reduced,
+    layout.revision,
+    input,
+    layer,
+    invalidate,
+  ]);
 
   useBeforePhysicsStep(() => {
     if (input.ready && !input.paused && !input.reduced) director.current?.step(1 / 60);
   });
   useFrame((_, dt) => {
+    if (visual.current) visual.current.visible = input.catEnabled;
+    if (ballVisual.current) ballVisual.current.visible = input.ballEnabled;
     const mode = input.reduced ? 'sleep' : input.mode;
-    if (visual.current) {
+    if (visual.current && input.catEnabled) {
       const target = input.facing < 0 ? Math.PI + 0.16 : -0.16;
       visual.current.rotation.y = THREE.MathUtils.damp(
         visual.current.rotation.y,
@@ -271,11 +284,37 @@ function Actors({ layout, input, layer, onReady }) {
     if (p && shadow.current) {
       shadow.current.position.set(p.x, p.y - CAT.halfHeight - 0.008, -0.05);
       shadow.current.scale.set(1, 0.075, 1);
-      shadow.current.visible = input.grounded;
+      shadow.current.visible = input.grounded && input.catEnabled;
     }
     if (b && ballShadow.current) {
       ballShadow.current.position.set(b.x, b.y - 0.15, -0.05);
-      ballShadow.current.scale.set(0.32, 0.035, 1);
+      ballShadow.current.scale.set(0.28, 0.03, 1);
+      ballShadow.current.visible = input.ballEnabled;
+    }
+    const bubble = layer.current?.querySelector('.pet3d-bubble'),
+      letter = layer.current?.querySelector('.pet3d-letter');
+    if (bubble && p) {
+      const show =
+        input.catEnabled &&
+        !input.paused &&
+        !input.reduced &&
+        input.bubble &&
+        input.bubble.until > input.time;
+      bubble.style.display = show ? 'block' : 'none';
+      if (show) {
+        if (bubble.textContent !== input.bubble.text) bubble.textContent = input.bubble.text;
+        const view = currentLayout.current.view;
+        bubble.style.transform = `translate3d(${Math.max(8, Math.min(view.width - 110, p.x * view.unit + 15))}px,${-p.y * view.unit - 60}px,0)`;
+      }
+    }
+    if (letter) {
+      const show =
+        input.catEnabled && !input.paused && !input.reduced && Boolean(input.stolenLetter);
+      letter.style.display = show ? 'block' : 'none';
+      if (show) {
+        if (letter.textContent !== input.stolenLetter) letter.textContent = input.stolenLetter;
+        letter.style.transform = `translate3d(${mouth.x * currentLayout.current.view.unit + 2}px,${-mouth.y * currentLayout.current.view.unit - 9}px,0) rotate(${Math.sin(input.time * 3) * 12}deg)`;
+      }
     }
     const stats = frameStats.current;
     stats.frames++;
@@ -286,7 +325,7 @@ function Actors({ layout, input, layer, onReady }) {
       const average = stats.total / stats.frames;
       const desired =
         average > 0.045
-          ? Math.min(stats.dpr, 0.6)
+          ? Math.min(stats.dpr, 0.8)
           : average > 0.027
             ? Math.min(stats.dpr, 0.8)
             : stats.dpr;
@@ -299,11 +338,15 @@ function Actors({ layout, input, layer, onReady }) {
     }
     if (stats.telemetry > 0.12 && p && b && layer.current) {
       stats.telemetry = 0;
+      model.byName.spine.getWorldPosition(petPoint);
+      const pick = worldToScreen(petPoint.x, petPoint.y, currentLayout.current.view);
       const c = worldToScreen(p.x, p.y, currentLayout.current.view),
         toy = worldToScreen(b.x, b.y, currentLayout.current.view),
         rect = input.host.getBoundingClientRect();
       Object.assign(layer.current.dataset, {
         catX: (c.x + rect.left).toFixed(1),
+        catPickX: (pick.x + rect.left).toFixed(1),
+        catPickY: (pick.y + rect.top).toFixed(1),
         catY: (c.y + rect.top).toFixed(1),
         ballX: (toy.x + rect.left).toFixed(1),
         ballY: (toy.y + rect.top).toFixed(1),
@@ -312,6 +355,12 @@ function Actors({ layout, input, layer, onReady }) {
         ballDocumentX: toy.x.toFixed(2),
         ballDocumentY: toy.y.toFixed(2),
         carryingBall: String(input.carryingBall),
+        stolenLetter: input.stolenLetter || '',
+        reactionCount: String(input.reactionCount || 0),
+        spawnSurface: input.spawnSurface || '',
+        spawnBehavior: input.spawnBehavior || '',
+        ballVisible: String(input.ballEnabled),
+        playingBall: String(director.current?.playingBall || false),
         mouthDocumentX: String(input.mouth.x * currentLayout.current.view.unit),
         mouthDocumentY: String(-input.mouth.y * currentLayout.current.view.unit),
         worldRevision: String(input.worldRevision || 0),
@@ -370,17 +419,19 @@ function Actors({ layout, input, layer, onReady }) {
         position={[1, 3, 0]}
         enabledTranslations={[true, true, false]}
         ccd
-        linearDamping={0.12}
-        angularDamping={0.2}
+        linearDamping={1.05}
+        angularDamping={1.5}
       >
-        <BallCollider args={[0.15]} mass={0.12} restitution={0.73} friction={0.65} />
-        <mesh ref={ballMesh}>
-          <sphereGeometry args={[0.15, 20, 14]} />
-          <meshStandardMaterial color={accent} roughness={0.42} metalness={0.12} />
-        </mesh>
-        <mesh geometry={yarn}>
-          <meshStandardMaterial color="#f5e3b4" roughness={0.9} />
-        </mesh>
+        <BallCollider args={[0.13]} mass={0.32} restitution={0.28} friction={1.1} />
+        <group ref={ballVisual}>
+          <mesh ref={ballMesh}>
+            <sphereGeometry args={[0.13, 20, 14]} />
+            <meshStandardMaterial color={accent} roughness={0.42} metalness={0.12} />
+          </mesh>
+          <mesh geometry={yarn} scale={0.87}>
+            <meshStandardMaterial color="#f5e3b4" roughness={0.9} />
+          </mesh>
+        </group>
       </RigidBody>
       <mesh ref={shadow}>
         <circleGeometry args={[0.55, 24]} />

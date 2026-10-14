@@ -1,4 +1,5 @@
 import { CAT, PET_UNIT, screenToWorld } from './math';
+import { collectTextTargets } from './textMischief';
 
 // Page coordinates have a permanent top-left origin. Scrolling never invalidates physics.
 export function observeDomWorld(host, onChange) {
@@ -8,7 +9,8 @@ export function observeDomWorld(host, onChange) {
     signature = '',
     nextId = 0;
   const observed = new Set(),
-    ids = new WeakMap();
+    ids = new WeakMap(),
+    textIds = new WeakMap();
   const resize = new ResizeObserver(refresh);
   function measure() {
     frame = 0;
@@ -26,7 +28,7 @@ export function observeDomWorld(host, onChange) {
       elementsById = new Map();
     const elements = [
       ...host.querySelectorAll(
-        '[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1',
+        '[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1,.habit-matrix tr,.calendar-day,.sidebar .nav-item,.sidebar .brand,.sidebar .profile-button',
       ),
     ];
     for (const element of elements) {
@@ -45,8 +47,10 @@ export function observeDomWorld(host, onChange) {
       }
       const left = Math.max(0, rect.left - origin.left),
         right = Math.min(view.width, rect.right - origin.left);
-      const top = rect.top - origin.top,
-        bottom = rect.bottom - origin.top;
+      const sidebar = element.closest('.sidebar');
+      const sidebarRect = sidebar?.getBoundingClientRect();
+      const top = sidebar ? rect.top - sidebarRect.top : rect.top - origin.top,
+        bottom = sidebar ? rect.bottom - sidebarRect.top : rect.bottom - origin.top;
       if (right <= left || bottom < 0 || top > view.height) continue;
       if (!ids.has(element)) ids.set(element, `ui-${nextId++}`);
       const a = screenToWorld(left, top, view),
@@ -54,18 +58,49 @@ export function observeDomWorld(host, onChange) {
       const kind =
         element.dataset.catSurface ||
         (element.matches('.entry-card') ? 'journal' : heading ? 'header' : 'panel');
+      const hollow = element.matches('.calendar-panel,.habit-panel,.entry-card');
       const thin =
-        kind === 'header' || kind === 'collection' || element.matches('.notepad-section-heading');
+        kind === 'header' ||
+        kind === 'collection' ||
+        element.matches(
+          '.notepad-section-heading,.calendar-day,.habit-matrix tr,.nav-item,.brand,.profile-button',
+        );
       const box = {
         id: ids.get(element),
         kind,
         left: a.x,
         right: b.x,
         top: a.y,
-        bottom: thin ? a.y - 0.045 : b.y,
+        bottom: thin || hollow ? a.y - 0.045 : b.y,
       };
       if (box.right - box.left < 0.1) continue;
       boxes.push(box);
+      if (hollow) {
+        boxes.push({
+          id: box.id + '-left',
+          kind: 'wall',
+          left: a.x,
+          right: a.x + 0.035,
+          top: a.y,
+          bottom: b.y,
+        });
+        boxes.push({
+          id: box.id + '-right',
+          kind: 'wall',
+          left: b.x - 0.035,
+          right: b.x,
+          top: a.y,
+          bottom: b.y,
+        });
+        boxes.push({
+          id: box.id + '-bottom',
+          kind: 'panel',
+          left: a.x,
+          right: b.x,
+          top: b.y + 0.035,
+          bottom: b.y,
+        });
+      }
       elementsById.set(box.id, heading || element.querySelector('h2,h3,.sticky-title') || element);
       if (
         top > CAT.halfHeight * 2 * view.unit + 4 &&
@@ -74,6 +109,28 @@ export function observeDomWorld(host, onChange) {
       )
         surfaces.push(box);
     }
+    const textTargets = collectTextTargets(host, (x, y) => screenToWorld(x, y, view));
+    textTargets.forEach((target) => {
+      if (target.width < CAT.halfWidth * 2 * view.unit + 6 || target.top < 55) return;
+      if (!textIds.has(target.node)) textIds.set(target.node, `text-${nextId++}`);
+      const a = screenToWorld(target.left, target.top + target.height + 9, view),
+        b = screenToWorld(
+          Math.min(view.width, target.left + target.width),
+          target.top + target.height + 10,
+          view,
+        );
+      const ledge = {
+        id: textIds.get(target.node),
+        kind: 'text',
+        left: a.x,
+        right: b.x,
+        top: a.y,
+        bottom: b.y,
+      };
+      boxes.push(ledge);
+      surfaces.push(ledge);
+      target.surface = ledge;
+    });
     const bounds = {
       width: view.width / view.unit,
       height: view.height / view.unit,
@@ -83,12 +140,17 @@ export function observeDomWorld(host, onChange) {
       bottom: -view.height / view.unit,
     };
     // Round subpixel DOM noise; a scroll offset cancels out of every measured rectangle.
-    const key = JSON.stringify([view, boxes], (_, value) =>
-      typeof value === 'number' ? Math.round(value * 1000) / 1000 : value,
+    const key = JSON.stringify(
+      [
+        view,
+        boxes,
+        textTargets.map((t) => [t.left, t.top, t.width, t.height, t.node.textContent.slice(0, 96)]),
+      ],
+      (_, value) => (typeof value === 'number' ? Math.round(value * 1000) / 1000 : value),
     );
     if (key !== signature) {
       signature = key;
-      onChange({ view, bounds, boxes, surfaces, elementsById, revision: key });
+      onChange({ view, bounds, boxes, surfaces, elementsById, textTargets, revision: key });
     }
     const targets = [host, ...elements];
     for (const e of observed)

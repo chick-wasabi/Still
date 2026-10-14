@@ -1,5 +1,6 @@
 export const GRAVITY = 26;
-export const PET_UNIT = 28;
+export const PET_UNIT = 40;
+export const KITTEN_HEIGHT = 45;
 export const BALL_RADIUS = 0.15;
 export const CAT = Object.freeze({ halfWidth: 0.57, halfHeight: 0.42, depth: 0.27 });
 export const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -68,6 +69,14 @@ export function perch(surface, boxes, bounds, fraction = 0.5) {
 }
 export function planLeap(from, to, boxes, bounds) {
   if (Math.abs(to.x - from.x) > 16 || to.y - from.y > 6 || from.y - to.y > 9) return null;
+  const local = boxes.filter(
+    (b) =>
+      b.right > Math.min(from.x, to.x) - CAT.halfWidth &&
+      b.left < Math.max(from.x, to.x) + CAT.halfWidth &&
+      b.top > Math.min(from.y, to.y) - CAT.halfHeight &&
+      b.bottom < Math.max(from.y, to.y) + 7 + CAT.halfHeight,
+  );
+  const point = { x: 0, y: 0 };
   for (
     let rise = Math.max(0.45, to.y - from.y + 0.3);
     rise < Math.min(bounds.height, 7);
@@ -75,13 +84,18 @@ export function planLeap(from, to, boxes, bounds) {
   ) {
     const velocity = launchVelocity(from, to, rise);
     if (Math.abs(velocity.x) > 13) continue;
-    const samples = Math.max(35, Math.ceil(velocity.time * 90));
-    if (
-      Array.from({ length: samples + 1 }, (_, i) =>
-        ballisticPoint(from, velocity, (i / samples) * velocity.time),
-      ).every((p) => clearBody(p, boxes, bounds))
-    )
-      return velocity;
+    const count = Math.max(35, Math.ceil(velocity.time * 90));
+    let safe = true;
+    for (let i = 0; i <= count; i++) {
+      const t = (i / count) * velocity.time;
+      point.x = from.x + velocity.x * t;
+      point.y = from.y + velocity.y * t - (GRAVITY * t * t) / 2;
+      if (!clearBody(point, local, bounds)) {
+        safe = false;
+        break;
+      }
+    }
+    if (safe) return velocity;
   }
   return null;
 }
@@ -100,12 +114,24 @@ export function tossVelocity(samples, maximum = 18) {
   return { x, y, z: 0 };
 }
 export function behavior(
-  { energy = 1, previous = '', cursor = false, ball = true, wall = false, text = false },
+  {
+    energy = 1,
+    previous = '',
+    cursor = false,
+    ball = true,
+    wall = false,
+    text = false,
+    recent = [],
+  },
   random = Math.random,
 ) {
   const weights = [
     ['idle', 1.4],
-    ['walk', 3.3],
+    ['walk', 2],
+    ['explore', 4],
+    ['sit', 1.2],
+    ['groom', 1.5],
+    ['meow', 1.2],
     ['run', 1.8],
     ['stretch', 1.5],
     ['roll', 1.2],
@@ -115,8 +141,11 @@ export function behavior(
     ['stalk', cursor ? 2 : 0],
     ['climb', wall ? 1.3 : 0],
     ['scratch', text ? 1.6 : 0],
+    ['steal-letter', text ? 1.2 : 0],
   ];
-  const available = weights.filter(([name, weight]) => weight && name !== previous);
+  const available = weights
+    .filter(([name, weight]) => weight && name !== previous)
+    .map(([name, w]) => [name, recent.includes(name) ? w * 0.18 : w]);
   let n = random() * available.reduce((sum, [, w]) => sum + w, 0);
   return available.find(([, w]) => (n -= w) < 0)?.[0] || 'idle';
 }

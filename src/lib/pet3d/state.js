@@ -1,6 +1,10 @@
 export function createPetInput() {
   return {
     ready: false,
+    catEnabled: true,
+    ballEnabled: false,
+    bubble: null,
+    stolenLetter: null,
     paused: false,
     reduced: false,
     mode: 'idle',

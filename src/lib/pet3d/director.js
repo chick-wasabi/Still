@@ -12,9 +12,19 @@ import {
   worldBounds,
 } from './math.js';
 import { maskToyContacts, restoreToyContacts } from './toyPhysics.js';
+import { createTextMischief } from './textMischief.js';
 
 // Physics owns translation. The director only chooses velocities/impulses and animation states.
-export function createDirector({ cat, ball, world, rapier, input, layout, notify }) {
+export function createDirector({
+  cat,
+  ball,
+  world,
+  rapier,
+  input,
+  layout,
+  notify,
+  randomizeSpawn = true,
+}) {
   let time = 0,
     since = 0,
     until = 2,
@@ -34,7 +44,20 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     disposed = false,
     previousLayout = null,
     climbing = null,
-    toyGroups = ball.collider(0).collisionGroups();
+    toyGroups = ball.collider(0).collisionGroups(),
+    catGroups = cat.collider(0).collisionGroups(),
+    catOn,
+    ballOn,
+    goal = null,
+    reactionIndex = 0,
+    cursorCooldown = 0,
+    ballCooldown = 0,
+    bats = 0;
+  const recent = [],
+    visits = new Map();
+  const mischief =
+    input.host && typeof document !== 'undefined' ? createTextMischief(input.host, input) : null;
+  input.restoreMischief = () => mischief?.dispose();
   const pages = new Map(),
     scratches = new Map();
   const fixed = (c) => c.parent()?.isFixed();
@@ -57,8 +80,12 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     input.mode = next;
     notify(next);
   }
+  function say(text) {
+    input.bubble = { text, until: time + randomRange(1.5, 2.8) };
+  }
   function releaseCursor() {
     if (input.held || cursorHunt) input.idleDeadline = performance.now() + randomRange(6000, 8000);
+    if (input.held) cursorCooldown = time + randomRange(18, 32);
     input.held = false;
     input.grabAt = 0;
     cursorHunt = false;
@@ -71,15 +98,24 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
         p.x - CAT.halfWidth < s.right,
     );
   }
-  function home() {
+  function home(randomized = false) {
     const l = layout(),
       edge = worldBounds(l.bounds);
-    const ordered = [...l.surfaces].sort((a, b) =>
-      a.kind === 'calendar' ? -1 : b.kind === 'calendar' ? 1 : 0,
-    );
-    for (const s of ordered) {
-      const p = perch(s, l.boxes, l.bounds);
-      if (p) return p;
+    const origin = input.host?.getBoundingClientRect?.();
+    const visible = l.surfaces.filter((surface) => {
+      const y = -surface.top * (l.view?.unit || 40) + (origin?.top || 0);
+      return !origin || (y > 65 && y < innerHeight - 25);
+    });
+    const ordered = randomized
+      ? [...(visible.length ? visible : l.surfaces)].sort(() => Math.random() - 0.5)
+      : [...l.surfaces];
+    for (const surface of ordered) {
+      const p = perch(surface, l.boxes, l.bounds, randomized ? randomRange(0.1, 0.9) : 0.5);
+      if (p) {
+        input.spawnSurface = surface.kind;
+        visits.set(surface.id, (visits.get(surface.id) || 0) + 1);
+        return p;
+      }
     }
     // A safe floor segment is also a real Rapier platform.
     for (let x = edge.left + CAT.halfWidth + 0.1; x < edge.right - CAT.halfWidth; x += 0.7) {
@@ -97,7 +133,7 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     const l = layout(),
       edge = worldBounds(l.bounds);
     cat.setBodyType(rapier.RigidBodyType.Dynamic, true);
-    cat.setTranslation(home(), true);
+    cat.setTranslation(home(randomizeSpawn), true);
     cat.setLinvel({ x: 0, y: 0, z: 0 }, true);
     const p = cat.translation();
     ball.setTranslation(
@@ -113,9 +149,42 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     target = null;
     climbing = null;
     releaseCursor();
-    setMode('idle', randomRange(1, 3));
+    goal = null;
+    const initial = randomizeSpawn
+      ? choose(['sleep', 'sit', 'stretch', 'groom', 'idle', 'head-tilt'])
+      : 'idle';
+    setMode(initial, randomRange(1.2, 3.8));
+    input.spawnBehavior = initial;
+    syncActors();
     revision = l.revision;
     previousLayout = l;
+  }
+  function syncActors() {
+    if (catOn !== input.catEnabled) {
+      catOn = input.catEnabled;
+      cat.setEnabled(catOn);
+      cat.collider(0).setCollisionGroups(catOn ? catGroups : 0);
+      if (!catOn) {
+        releaseCursor();
+        mischief?.dispose();
+        goal = null;
+      }
+    }
+    if (ballOn !== input.ballEnabled) {
+      dropBall();
+      ballOn = input.ballEnabled;
+      ball.setEnabled(ballOn);
+      ball.collider(0).setCollisionGroups(ballOn ? toyGroups : 0);
+      if (ballOn) {
+        const p = cat.translation();
+        ball.setTranslation({ x: p.x + 1.2, y: p.y + 0.1, z: 0 }, true);
+        ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      } else {
+        interestUntil = 0;
+        input.ballMoved = false;
+        if (input.drag?.kind === 'ball') input.cancelDrag?.();
+      }
+    }
   }
   function reconcile() {
     const l = layout();
@@ -126,6 +195,7 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
         ball: { ...ball.translation() },
       });
       dropBall();
+      goal = null;
       const saved = pages.get(l.pageKey);
       if (saved && clearBody(saved.cat, l.boxes, l.bounds)) {
         cat.setBodyType(rapier.RigidBodyType.Dynamic, true);
@@ -170,6 +240,17 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
         }
       }
     }
+    if (goal?.textTarget) {
+      const updated = l.textTargets?.find((t) => t.node === goal.textTarget.node);
+      if (updated) {
+        goal.textTarget = updated;
+        goal.point = updated.point;
+        goal.surface = updated.surface || goal.surface;
+      } else {
+        goal = null;
+        mischief?.dispose();
+      }
+    }
     if (climbing) {
       const box = l.boxes.find((b) => b.id === climbing.box.id);
       if (box)
@@ -194,7 +275,9 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     input.carryingBall = false;
     ball.setBodyType(rapier.RigidBodyType.Dynamic, true);
     restoreToyContacts(ball, toyGroups);
-    ball.setLinvel({ x: input.facing * 1.8, y: 1, z: 0 }, true);
+    ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    interestUntil = 0;
+    ballCooldown = time + randomRange(12, 25);
   }
   function startClimb(box) {
     if (!box || box.top - box.bottom < 1 || input.drag || input.held) return false;
@@ -216,27 +299,135 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     setMode('climb', Math.min(9, (climbing.goal - p.y) / 2.4 + 0.5));
     return true;
   }
-  function scratch() {
+  function scratch(targetText = null) {
     const l = layout(),
       p = cat.translation();
-    const surface =
-      surfaceAt(p) ||
-      [...l.surfaces].sort(
-        (a, b) => length({ x: a.left, y: a.top }, p) - length({ x: b.left, y: b.top }, p),
-      )[0];
-    const element = l.elementsById?.get(surface?.id);
-    if (element) {
-      clearTimeout(scratches.get(element));
-      element.setAttribute('data-pet-scratched', 'true');
-      scratches.set(
-        element,
-        setTimeout(() => {
-          element.removeAttribute('data-pet-scratched');
-          scratches.delete(element);
-        }, 700),
-      );
+    const text =
+      targetText ||
+      l.textTargets
+        ?.filter((t) => t.node.isConnected)
+        .sort((a, b) => length(a.point, p) - length(b.point, p))[0];
+    if (text && mischief) mischief.scratch(text);
+    else {
+      const element = l.elementsById?.get(surfaceAt(p)?.id);
+      if (element) {
+        element.setAttribute('data-pet-scratched', 'true');
+        clearTimeout(scratches.get(element));
+        scratches.set(
+          element,
+          setTimeout(() => {
+            element.removeAttribute('data-pet-scratched');
+            scratches.delete(element);
+          }, 850),
+        );
+      }
     }
-    setMode('scratch', randomRange(1.1, 1.8));
+    setMode(choose(['scratch', 'scratch-rear']), randomRange(1, 1.7));
+    if (Math.random() < 0.4) say('tiny claws!');
+  }
+  function visit(surface, action = 'explore', textTarget = null) {
+    if (!surface) return false;
+    goal = {
+      surface,
+      action,
+      textTarget,
+      point: textTarget?.point || { x: randomRange(surface.left, surface.right), y: surface.top },
+      expires: time + randomRange(8, 14),
+    };
+    return pursueGoal();
+  }
+  function pursueGoal() {
+    if (!goal) return false;
+    const l = layout(),
+      p = cat.translation(),
+      g = goal;
+    const dest = perch(
+      g.surface,
+      l.boxes,
+      l.bounds,
+      clamp((g.point.x - g.surface.left) / (g.surface.right - g.surface.left), 0, 1),
+    );
+    if (!dest || time > g.expires) {
+      goal = null;
+      setMode('idle', 1);
+      return false;
+    }
+    if (length(p, dest) < 0.28) {
+      goal = null;
+      visits.set(g.surface.id, (visits.get(g.surface.id) || 0) + 1);
+      if (g.action === 'scratch') scratch(g.textTarget);
+      else if (g.action === 'steal-letter') {
+        if (mischief?.steal(g.textTarget)) {
+          setMode('grab-letter', 0.8);
+          say(choose(['mine now', 'mrrp?', 'a tiny souvenir']));
+        } else setMode('head-tilt', 1.8);
+      } else setMode(choose(['sit', 'groom', 'idle', 'head-tilt']), randomRange(1, 3));
+      return true;
+    }
+    const current = surfaceAt(p);
+    if (
+      current?.id === g.surface.id &&
+      walkTo(dest.x, 'visit', Math.min(9, Math.abs(dest.x - p.x) / 1.6 + 1))
+    )
+      return true;
+    if (startJump(g.surface, 'visit')) return true;
+    if (current) {
+      const x = clamp(
+        dest.x,
+        current.left + CAT.halfWidth + 0.05,
+        current.right - CAT.halfWidth - 0.05,
+      );
+      if (Math.abs(x - p.x) > 0.4 && walkTo(x, 'visit', Math.min(9, Math.abs(x - p.x) / 1.6 + 1)))
+        return true;
+    }
+    const distance = length(p, dest);
+    const bridges = [...l.surfaces]
+      .filter((s) => s.id !== current?.id && s.id !== g.surface.id)
+      .map((s) => ({ s, p: perch(s, l.boxes, l.bounds) }))
+      .filter(
+        (t) =>
+          t.p &&
+          Math.abs(t.p.x - p.x) <= 16 &&
+          t.p.y - p.y <= 6 &&
+          p.y - t.p.y <= 9 &&
+          length(t.p, dest) < distance - 0.25,
+      )
+      .sort((a, b) => length(a.p, dest) - length(b.p, dest));
+    if (bridges.slice(0, 10).some((t) => startJump(t.s, 'visit'))) return true;
+    if (current && dest.y < p.y - 1) {
+      const side = dest.x < p.x ? -1 : 1,
+        edgeX = side < 0 ? current.left : current.right;
+      if (walkTo(edgeX, 'descend', 8)) {
+        target.x = edgeX + side * (CAT.halfWidth + 0.35);
+        afterLanding = 'visit';
+        return true;
+      }
+    }
+    goal = null;
+    setMode('head-tilt', 1.2);
+    return false;
+  }
+  function chooseText(action) {
+    const l = layout(),
+      origin = input.host?.getBoundingClientRect?.();
+    const targets = (l.textTargets || []).filter(
+      (t) =>
+        t.node.isConnected &&
+        (!origin ||
+          (-t.point.y * l.view.unit + origin.top > 50 &&
+            -t.point.y * l.view.unit + origin.top < innerHeight - 20)),
+    );
+    for (const text of targets.sort(() => Math.random() - 0.5).slice(0, 12)) {
+      const surface =
+        text.surface ||
+        [...l.surfaces].sort(
+          (a, b) =>
+            length({ x: clamp(text.point.x, a.left, a.right), y: a.top }, text.point) -
+            length({ x: clamp(text.point.x, b.left, b.right), y: b.top }, text.point),
+        )[0];
+      if (surface && visit(surface, action, text)) return true;
+    }
+    return false;
   }
   function startJump(surface, after = 'idle') {
     if (!surface) return false;
@@ -273,6 +464,7 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     return true;
   }
   function stalk() {
+    goal = null;
     cursorHunt = true;
     const p = cat.translation(),
       pointer = input.worldPointer,
@@ -296,21 +488,35 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     }
     if (input.held && time - input.heldAt > 4 && (Math.random() < 0.3 || time - input.heldAt > 20))
       releaseCursor();
+    const ballInterest =
+      input.ballEnabled &&
+      !input.held &&
+      !input.stolenLetter &&
+      (time < interestUntil || (time > ballCooldown && Math.random() < 0.08));
     const next =
-      time < interestUntil
+      time < interestUntil && input.ballEnabled
         ? 'hunt'
         : behavior({
             energy,
             previous,
-            cursor: input.cursorActive && !input.held,
-            ball: !input.held,
-            wall: layout().boxes.some((b) => b.top - b.bottom > 1),
-            text: true,
+            recent,
+            cursor: false,
+            ball: ballInterest,
+            wall: true,
+            text: Boolean(layout().textTargets?.length) && !input.held && !input.carryingBall,
           });
+    recent.push(next);
+    if (recent.length > 3) recent.shift();
+    if (next === 'hunt' && time >= interestUntil) interestUntil = time + randomRange(4, 7);
     previous = next;
     energy = clamp(energy + (next === 'sleep' ? 0.3 : -0.06), 0, 1);
-    if (next === 'scratch') {
-      scratch();
+    if (next === 'scratch' || next === 'steal-letter') {
+      if (!chooseText(next)) scratch();
+      return;
+    }
+    if (next === 'meow') {
+      say(choose(['meow', 'pet me?', 'mrrp', 'just checking in']));
+      setMode('meow', randomRange(1.4, 2.3));
       return;
     }
     if (next === 'climb') {
@@ -318,11 +524,13 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       scratch();
       return;
     }
-    if (next === 'jump') {
-      const candidates = [...layout().surfaces].sort(() => Math.random() - 0.5).slice(0, 24);
-      for (const surface of candidates)
-        if (surface !== surfaceAt(cat.translation()) && startJump(surface)) return;
-      setMode('stretch', 4);
+    if (next === 'jump' || next === 'explore') {
+      const candidates = [...layout().surfaces]
+        .filter((s) => s.id !== surfaceAt(cat.translation())?.id)
+        .map((s) => ({ s, score: Math.random() / (1 + (visits.get(s.id) || 0) * 2) }))
+        .sort((a, b) => b.score - a.score);
+      for (const { s } of candidates.slice(0, 12)) if (visit(s)) return;
+      setMode('groom', 2);
       return;
     }
     if (next === 'walk' || next === 'run') {
@@ -350,7 +558,7 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     setMode(
       next,
       next === 'sleep'
-        ? randomRange(6, 13)
+        ? randomRange(2.5, 5)
         : next === 'roll'
           ? 3.2
           : next === 'stretch'
@@ -370,9 +578,23 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
   function command(action) {
     if (action === 'pet' && grounded) {
       releaseCursor();
-      setMode(choose(['roll', 'stretch']), 3.5);
+      goal = null;
+      mischief?.restoreLetter();
+      const reaction = ['purr', 'bat', 'head-tilt', 'hop'][reactionIndex++ % 4];
+      input.reactionCount = reactionIndex;
+      say({ purr: 'purrr', bat: 'gotcha!', 'head-tilt': 'pet me?', hop: 'mrrp!' }[reaction]);
+      if (reaction === 'hop') {
+        const p = cat.translation(),
+          dest = { x: p.x, y: p.y, z: 0 };
+        const velocity = planLeap(p, dest, layout().boxes, layout().bounds);
+        if (velocity) {
+          cat.setLinvel(velocity, true);
+          airborneSince = time;
+          setMode('jump', 2);
+        } else setMode('head-tilt', 1.5);
+      } else setMode(reaction, randomRange(1.5, 2.5));
     }
-    if (action === 'ball') {
+    if (action === 'ball' && input.ballEnabled) {
       dropBall();
       const p = cat.translation(),
         edge = worldBounds(layout().bounds),
@@ -380,7 +602,9 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       ball.setBodyType(rapier.RigidBodyType.Dynamic, true);
       ball.setTranslation({ x: p.x + direction, y: p.y + 1.1, z: 0 }, true);
       ball.setLinvel({ x: direction * 3, y: 4, z: 0 }, true);
-      interestUntil = time + 9;
+      interestUntil = time + randomRange(5, 8);
+      bats = 0;
+      ballCooldown = 0;
       releaseCursor();
       setMode('hunt', 7);
     }
@@ -389,11 +613,17 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
   function step(dt) {
     if (disposed) return;
     time += dt;
+    syncActors();
     const l = layout();
     if (revision !== l.revision || previousLayout?.pageKey !== l.pageKey) reconcile();
     if (input.command && (input.command !== 'pet' || grounded)) {
       command(input.command);
       input.command = null;
+    }
+    if (!input.catEnabled) {
+      input.time = time;
+      input.stateTime = 0;
+      return;
     }
     const p = cat.translation(),
       v = cat.linvel();
@@ -428,10 +658,23 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       airborneSince = time;
       setMode('tossed', 5);
     }
-    if (input.ballMoved) {
+    if (input.ballMoved && input.ballEnabled) {
+      goal = null;
+      mischief?.restoreLetter();
+      releaseCursor();
       input.ballMoved = false;
-      interestUntil = time + 10;
+      interestUntil = time + randomRange(5, 8);
+      bats = 0;
+      ballCooldown = 0;
       if (grounded) setMode('hunt', 7);
+    }
+    if (interestUntil && time >= interestUntil) {
+      interestUntil = 0;
+      ballCooldown = time + randomRange(12, 25);
+      if (mode === 'hunt') {
+        setMode('groom', 2);
+        return;
+      }
     }
     if (mode === 'climb' && climbing) {
       const y = Math.min(climbing.goal, p.y + dt * 2.4);
@@ -494,6 +737,10 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       return;
     }
     if (mode === 'land' && time >= until) {
+      if (goal) {
+        pursueGoal();
+        return;
+      }
       if (cursorHunt) {
         setMode('stalk-ready', 0.5);
       } else if (afterLanding === 'hunt') {
@@ -507,6 +754,9 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       document.activeElement?.matches('input,textarea,select,[contenteditable="true"]');
     if (
       input.cursorActive &&
+      time > cursorCooldown &&
+      !input.carryingBall &&
+      !input.stolenLetter &&
       !input.held &&
       !writing &&
       !input.pressed &&
@@ -528,9 +778,13 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       } else decide();
       return;
     }
-    if (['walk', 'run', 'stalk', 'carry', 'descend'].includes(mode)) {
+    if (['walk', 'run', 'stalk', 'carry', 'descend', 'visit'].includes(mode)) {
       if (!target || Math.abs(target.x - p.x) < 0.1 || time >= until) {
         cat.setLinvel({ x: 0, y: v.y, z: 0 }, true);
+        if (goal) {
+          pursueGoal();
+          return;
+        }
         if (cursorHunt && input.cursorActive) {
           setMode('grab', 0.6);
           input.held = true;
@@ -548,6 +802,11 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       );
       input.facing = direction;
     } else if (mode === 'hunt') {
+      if (!input.ballEnabled || time > interestUntil) {
+        setMode('groom', 2);
+        return;
+      }
+
       const b = ball.translation(),
         dx = b.x - p.x;
       if (Math.hypot(dx, b.y - p.y) < 1.3 && input.drag?.kind !== 'ball') {
@@ -559,7 +818,11 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
             setMode('carry', 2);
           return;
         }
-        ball.applyImpulse({ x: Math.sign(dx || 1) * 0.45, y: 0.35, z: 0 }, true);
+        ball.applyImpulse({ x: Math.sign(dx || 1) * 0.2, y: 0.09, z: 0 }, true);
+        if (++bats >= 2) {
+          interestUntil = 0;
+          ballCooldown = time + randomRange(15, 30);
+        }
         setMode('bat', 0.8);
       } else if (Math.abs(dx) > 0.2) {
         const sameLevel = Math.abs(b.y - p.y) < 0.9;
@@ -584,13 +847,17 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       }
     } else {
       if (Math.abs(v.x) > 0.02) cat.setLinvel({ x: v.x * Math.exp(-dt * 10), y: v.y, z: 0 }, true);
-      if (time >= until) decide();
+      if (time >= until) {
+        if (goal) pursueGoal();
+        else decide();
+      }
     }
   }
   function setModeIfDifferent(next) {
     if (mode !== next) setMode(next);
   }
   function interrupt() {
+    mischief?.restoreLetter();
     if (cursorHunt || input.held || mode === 'grab') {
       releaseCursor();
       if (!['jump', 'fall', 'tossed'].includes(mode)) setMode('idle', 1);
@@ -604,8 +871,12 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
     interrupt,
     initialize: reset,
     reconcile,
+    syncActors,
     dispose() {
       disposed = true;
+      mischief?.dispose();
+      input.restoreMischief = null;
+      input.bubble = null;
       dropBall();
       for (const [element, timer] of scratches) {
         clearTimeout(timer);
@@ -613,6 +884,9 @@ export function createDirector({ cat, ball, world, rapier, input, layout, notify
       }
       scratches.clear();
       releaseCursor();
+    },
+    get playingBall() {
+      return input.ballEnabled && time < interestUntil;
     },
     get mode() {
       return mode;

@@ -35,7 +35,7 @@ export function bindPetInput({
     return input.ready && !input.paused && !input.reduced && !document.hidden;
   }
   function usable() {
-    return interactive() && fine.matches && input.pointer.inside;
+    return interactive() && input.catEnabled && fine.matches && input.pointer.inside;
   }
   function localPoint(event) {
     const rect = input.host.getBoundingClientRect();
@@ -89,6 +89,7 @@ export function bindPetInput({
       if (x + hw > b.left && x - hw < b.right && y + hh > b.bottom && y - hh < b.top) {
         const candidates = [
           { x, y: b.top + hh + 0.025 },
+          { x, y: b.bottom - hh - 0.025 },
           { x: b.left - hw - 0.025, y },
           { x: b.right + hw + 0.025, y },
         ].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
@@ -124,6 +125,7 @@ export function bindPetInput({
       pickables = [],
       local = localPoint(event);
     if (
+      input.catEnabled &&
       Math.abs(local.x - catScreen.x) < view.unit * 1.2 &&
       Math.abs(local.y - catScreen.y) < view.unit * 1.5
     ) {
@@ -131,7 +133,10 @@ export function bindPetInput({
       catMesh.computeBoundingSphere();
       pickables.push(catMesh);
     }
-    if (Math.hypot(local.x - ballScreen.x, local.y - ballScreen.y) < view.unit * 0.22) {
+    if (
+      input.ballEnabled &&
+      Math.hypot(local.x - ballScreen.x, local.y - ballScreen.y) < view.unit * 0.22
+    ) {
       ballMesh.updateMatrixWorld(true);
       pickables.push(ballMesh);
     }
@@ -154,6 +159,8 @@ export function bindPetInput({
       input.ballMoved = true;
       input.drag.collisionGroups = maskToyContacts(body);
     }
+    if (kind === 'cat') input.drag.collisionGroups = maskToyContacts(body);
+    body.enableCcd(false);
     body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
     body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     event.target.setPointerCapture?.(event.pointerId);
@@ -168,6 +175,8 @@ export function bindPetInput({
     const drag = input.drag;
     if (!drag) return;
     drag.body.setBodyType(rapier.RigidBodyType.Dynamic, true);
+    drag.body.enableCcd(true);
+    restoreToyContacts(drag.body, drag.collisionGroups);
     if (drag.kind === 'ball') {
       const position = drag.samples.at(-1);
       drag.body.setTranslation({ x: position.x, y: position.y, z: 0 }, true);
@@ -181,9 +190,10 @@ export function bindPetInput({
     input.lastTossSpeed = Math.hypot(velocity.x, velocity.y);
     if (drag.kind === 'ball') drag.body.setAngvel({ x: 0, y: 0, z: -velocity.x * 2 }, true);
     if (drag.kind === 'cat') {
-      if (!cancelled && Math.hypot(event.clientX - drag.start.x, event.clientY - drag.start.y) < 5)
-        input.command = 'pet';
-      input.justTossed = true;
+      const clicked =
+        !cancelled && Math.hypot(event.clientX - drag.start.x, event.clientY - drag.start.y) < 5;
+      if (clicked) input.command = 'pet';
+      input.justTossed = !clicked;
     } else input.ballMoved = true;
     drag.capture.releasePointerCapture?.(drag.id);
     input.drag = null;
