@@ -1,9 +1,86 @@
-export const dateKey=(d=new Date())=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-const today=new Date();
-const day=(n)=>dateKey(new Date(today.getFullYear(),today.getMonth(),n));
-export const initialNotes=[{id:'n1',title:'A little room to grow',emoji:'🌱',date:dateKey(),folder:'personal',mood:'Peaceful',body:'Sometimes progress looks like slowing down.\n\nThis morning I made coffee, opened the windows, and let myself just be for a while. No phone. No list of things to catch up on.\n\nA reminder for the days ahead: I don’t need to have everything figured out to take the next small step.',color:'green'},{id:'n2',title:'Finding my rhythm',emoji:'☀️',date:day(Math.max(1,today.getDate()-2)),folder:'personal',mood:'Inspired',body:'A slow morning, a good playlist, and a little more clarity. Starting to find a routine that feels like me.',color:'orange'},{id:'n3',title:'Things worth noticing',emoji:'✨',date:day(Math.max(1,today.getDate()-4)),folder:'personal',mood:'Grateful',body:'The light on the kitchen wall. An unexpected message from an old friend. A walk with nowhere in particular to go.\n\nSmall things, big feelings.',color:'purple'},{id:'n4',title:'Ideas for a slower weekend',emoji:'🪴',date:null,folder:'ideas',mood:'Thoughtful',body:'Visit the little bookshop on the corner.\nTry a new recipe.\nLeave a little space for nothing at all.',color:'blue'}];
-export const initialFolders=[{id:'personal',name:'Personal',emoji:'🌿',parent:null},{id:'reflections',name:'Reflections',emoji:'🪞',parent:'personal'},{id:'work',name:'Work & projects',emoji:'💼',parent:null},{id:'ideas',name:'Little ideas',emoji:'💡',parent:null}];
-export const initialTasks=[{id:'t1',title:'Plan the week ahead',priority:'High',status:'To Do',due:dateKey(),description:'Make a little space for what matters.'},{id:'t2',title:'Finish reading a chapter',priority:'Low',status:'To Do',due:'',description:'One page at a time.'},{id:'t3',title:'Refresh portfolio ideas',priority:'Medium',status:'In Progress',due:dateKey(),description:'Collect inspiration and explore a new direction.'},{id:'t4',title:'Go for a morning walk',priority:'Medium',status:'Done',due:dateKey(),description:'Fresh air, fresh perspective.'}];
-export const initialHabits=[{id:'h1',name:'Read 20 minutes',emoji:'📚',days:[]},{id:'h2',name:'A moment of mindfulness',emoji:'🧘',days:[]},{id:'h3',name:'Move my body',emoji:'🏃',days:[]},{id:'h4',name:'Write a little',emoji:'✍️',days:[]}];
-export function useStorage(key,initial){const [value,set]=React.useState(()=>{try{return JSON.parse(localStorage.getItem(key))??initial}catch{return initial}});React.useEffect(()=>{localStorage.setItem(key,JSON.stringify(value))},[key,value]);return [value,set]}
-import React from 'react';
+import { isLegacyExample } from './lib/legacy.js';
+export const dateKey = (date = new Date()) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+export const emptyWorkspace = () => ({
+  profile: { name: '', avatar: '✦' },
+  notes: [],
+  folders: [],
+  tasks: [],
+  habits: [],
+});
+
+export function currentStreak(completions, today = new Date()) {
+  const days = new Set(completions);
+  const cursor = new Date(today);
+  if (!days.has(dateKey(cursor))) cursor.setDate(cursor.getDate() - 1);
+  let streak = 0;
+  while (days.has(dateKey(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+export function canMoveFolder(folders, id, parent) {
+  const visited = new Set([id]);
+  let ancestor = parent;
+  while (ancestor) {
+    if (visited.has(ancestor)) return false;
+    visited.add(ancestor);
+    ancestor = folders.find((folder) => folder.id === ancestor)?.parent;
+  }
+  return true;
+}
+
+export function collectionIds(folders, id) {
+  const ids = new Set([id]);
+  let previous;
+  do {
+    previous = ids.size;
+    folders.forEach((folder) => {
+      if (ids.has(folder.parent)) ids.add(folder.id);
+    });
+  } while (ids.size !== previous);
+  return ids;
+}
+
+// Preserve authored and edited v1 items while removing untouched examples.
+export function migrateLegacy(storage) {
+  const result = emptyWorkspace();
+  let legacyFolders = [];
+  for (const type of ['notes', 'tasks', 'habits', 'folders']) {
+    const raw = storage.getItem(`still-${type}-v1`);
+    if (!raw) continue;
+    const items = JSON.parse(raw);
+    if (!Array.isArray(items))
+      throw new Error('Invalid legacy workspace data. Your stored data has not been changed.');
+    result[type] = items.filter((item) => !isLegacyExample(item, type));
+    if (type === 'folders') legacyFolders = items;
+  }
+  // Keep original collections when they hold authored notes or subcollections.
+  const retained = new Set(
+    [
+      ...result.notes.map((note) => note.folder),
+      ...result.folders.map((folder) => folder.id),
+    ].filter(Boolean),
+  );
+  let size;
+  do {
+    size = retained.size;
+    legacyFolders.forEach((folder) => {
+      if (retained.has(folder.id) && folder.parent) retained.add(folder.parent);
+    });
+  } while (size !== retained.size);
+  result.folders = legacyFolders.filter((folder) => retained.has(folder.id));
+  const folderIds = new Set(result.folders.map((folder) => folder.id));
+  result.folders = result.folders.map((folder) => ({
+    ...folder,
+    parent: folderIds.has(folder.parent) ? folder.parent : null,
+  }));
+  result.notes = result.notes.map((note) => ({
+    ...note,
+    folder: folderIds.has(note.folder) ? note.folder : null,
+  }));
+  return result;
+}

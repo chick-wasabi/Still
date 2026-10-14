@@ -1,5 +1,156 @@
-import React from 'react';
-import {useState} from 'react';
-import {ArrowUpRight,Plus,LayoutGrid,List,ChevronDown,BookOpen,Flame,Smile,ArrowRight} from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ArrowUpRight, Plus, LayoutGrid, List, BookOpen, ArrowRight, Sparkles } from 'lucide-react';
 import Calendar from './Calendar';
-export default function JournalView({notes,openNote,openDate,newNote,folder,folders}){const [month,setMonth]=useState(new Date());const [list,setList]=useState(false);const [filter,setFilter]=useState('all');const shown=notes.filter(n=>(!folder||n.folder===folder)&&(filter==='all'||(filter==='dated'?n.date:!n.date))).sort((a,b)=>(b.date||'').localeCompare(a.date||''));const greeting=new Date().getHours()<12?'Good morning':new Date().getHours()<18?'Good afternoon':'Good evening';return <><div className="page-intro"><div className="eyebrow"><span/> A SPACE TO SLOW DOWN</div><h1>{greeting}, Alex <span className="wave">☀️</span></h1><p>Clear your mind. Capture the little things. Make room for you.</p></div><div className="journal-heading"><div><h2>{folder?folders.find(f=>f.id===folder)?.name:'Your journal'}<span className="heading-dot"/></h2><p>A collection of moments, thoughts, and everything in between.</p></div><button className="primary-button" onClick={newNote}><Plus size={17}/>New entry</button></div><div className="stats-grid"><div className="stat-card"><span className="stat-icon purple"><BookOpen size={19}/></span><div><small>Total entries</small><strong>{notes.length}<span>moments captured</span></strong></div><span className="stat-decoration">↗</span></div><div className="stat-card"><span className="stat-icon orange"><Flame size={19}/></span><div><small>Days of reflection</small><strong>{new Set(notes.filter(n=>n.date).map(n=>n.date)).size}<span>keep showing up</span></strong></div><span className="mini-bars">▂▃▂▅▃▆▅</span></div><div className="stat-card"><span className="stat-icon green"><Smile size={19}/></span><div><small>A little check-in</small><strong className="mood-stat">{notes[0]?.mood||'A fresh start'}<span>one day at a time</span></strong></div><span className="mood-sparkle">✧</span></div></div><Calendar month={month} setMonth={setMonth} notes={notes} openDate={openDate}/><div className="entries-heading"><div><h2>{folder?'Collection entries':'Recent entries'} <span>{shown.length}</span></h2><p>Little pieces of your everyday.</p></div><div className="entry-controls"><select aria-label="Filter entries" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All entries</option><option value="dated">Journal entries</option><option value="scratch">Scratchpad</option></select><div className="view-switch"><button aria-label="Grid view" className={!list?'selected':''} onClick={()=>setList(false)}><LayoutGrid size={16}/></button><button aria-label="List view" className={list?'selected':''} onClick={()=>setList(true)}><List size={17}/></button></div></div></div><div className={`entry-grid ${list?'entry-list':''}`}>{shown.map(n=><button key={n.id} className={`entry-card ${n.color||'purple'}`} onClick={()=>openNote(n)}><div className="entry-top"><span className="entry-icon">{n.emoji}</span><ArrowUpRight size={17}/></div><small>{n.date?new Date(n.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'UNDATED THOUGHT'}</small><h3>{n.title||'Untitled entry'}</h3><p>{n.body||'A blank page, a fresh beginning.'}</p><div className="entry-footer"><span><i/>{n.mood||'Thoughtful'}</span><span>{n.body.trim()?n.body.trim().split(/\s+/).length:0} words</span></div></button>)}{shown.length===0&&<div className="empty-state">A little room for your thoughts.<button className="text-button" onClick={newNote}>Write your first entry <ArrowRight size={16}/></button></div>}</div><div className="bottom-quote">“Almost everything will work again if you unplug it for a few minutes, including you.”<span>— Anne Lamott</span></div></>}
+import EmptyState from './EmptyState';
+import { collectionIds } from '../data';
+export default function JournalView({
+  notes,
+  openNote,
+  openDate,
+  newNote,
+  folder,
+  folders,
+  profile,
+  openSettings,
+}) {
+  const [month, setMonth] = useState(() => new Date());
+  const [list, setList] = useState(false);
+  const [filter, setFilter] = useState('all');
+  const shown = useMemo(() => {
+    const ids = folder ? collectionIds(folders, folder) : null;
+    return notes.filter(
+      (note) =>
+        (!ids || ids.has(note.folder)) &&
+        (filter === 'all' || (filter === 'dated' ? note.date : !note.date)),
+    );
+  }, [notes, folder, folders, filter]);
+  const greeting =
+    new Date().getHours() < 12
+      ? 'Good morning'
+      : new Date().getHours() < 18
+        ? 'Good afternoon'
+        : 'Good evening';
+  return (
+    <>
+      <div className="page-intro">
+        <div className="eyebrow">
+          <span />
+          YOUR PERSONAL SANCTUARY
+        </div>
+        <h1>
+          {profile.name ? `${greeting}, ${profile.name.split(' ')[0]}.` : 'A little space for you.'}
+          <span className="intro-sparkle">✧</span>
+        </h1>
+        <p>Clear your mind. Capture a moment. Come back to yourself.</p>
+        {!profile.name && (
+          <button className="intro-link" onClick={openSettings}>
+            Make this space yours
+            <ArrowRight size={16} />
+          </button>
+        )}
+      </div>
+      <div className="journal-heading">
+        <div>
+          <h2>
+            {folder
+              ? `${folders.find((item) => item.id === folder)?.emoji || ''} ${folders.find((item) => item.id === folder)?.name || 'Collection'}`
+              : 'Your journal'}
+          </h2>
+          <p>
+            {notes.length
+              ? `${notes.length} ${notes.length === 1 ? 'moment' : 'moments'} captured. A little more clarity, one entry at a time.`
+              : 'No expectations. Just a place to begin.'}
+          </p>
+        </div>
+        <button className="primary-button" onClick={newNote}>
+          <Plus size={19} />
+          New entry
+        </button>
+      </div>
+      <Calendar month={month} setMonth={setMonth} notes={notes} openDate={openDate} />
+      <div className="entries-heading">
+        <div>
+          <h2>
+            {folder ? 'In this collection' : 'Your entries'}
+            <span>{shown.length}</span>
+          </h2>
+          <p>{folder ? 'Includes entries in subcollections.' : 'Your moments, kept together.'}</p>
+        </div>
+        <div className="entry-controls">
+          <select
+            aria-label="Filter entries"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          >
+            <option value="all">All entries</option>
+            <option value="dated">Journal</option>
+            <option value="scratch">Scratchpad</option>
+          </select>
+          <div className="view-switch">
+            <button
+              aria-label="Grid view"
+              aria-pressed={!list}
+              className={!list ? 'selected' : ''}
+              onClick={() => setList(false)}
+            >
+              <LayoutGrid size={18} />
+            </button>
+            <button
+              aria-label="List view"
+              aria-pressed={list}
+              className={list ? 'selected' : ''}
+              onClick={() => setList(true)}
+            >
+              <List size={19} />
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className={`entry-grid ${list ? 'entry-list' : ''}`}>
+        {shown.map((note) => (
+          <button key={note.id} className="entry-card" onClick={() => openNote(note)}>
+            <div className="entry-top">
+              <span className="entry-icon">{note.emoji}</span>
+              <ArrowUpRight size={18} />
+            </div>
+            <small>
+              {note.date
+                ? new Date(`${note.date}T12:00:00`).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })
+                : 'UNDATED THOUGHT'}
+            </small>
+            <h3>{note.title || 'Untitled entry'}</h3>
+            <p>{note.body || 'A moment, made your own.'}</p>
+            <div className="entry-footer">
+              <span>
+                <i />
+                {note.mood}
+              </span>
+              <span>{note.body.trim() ? note.body.trim().split(/\s+/).length : 0} words</span>
+            </div>
+          </button>
+        ))}
+        {!shown.length && (
+          <EmptyState
+            icon={BookOpen}
+            title={notes.length ? 'A little room for something new.' : 'Your story starts here.'}
+            description={
+              notes.length
+                ? 'No entries match this view. Add a thought or explore your other collections.'
+                : 'A thought, a feeling, a small detail from your day. There’s no right way to begin.'
+            }
+            action={notes.length ? 'Write an entry' : 'Write your first entry'}
+            onAction={newNote}
+          />
+        )}
+      </div>
+      <div className="journal-reminder">
+        <Sparkles size={17} />
+        <span>A few words is enough. This space is yours.</span>
+      </div>
+    </>
+  );
+}

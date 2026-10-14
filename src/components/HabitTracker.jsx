@@ -1,6 +1,291 @@
-import React from 'react';
-import {useState} from 'react';
-import {Plus,ChevronLeft,ChevronRight,Check,Flame,Trash2} from 'lucide-react';
-import {dateKey} from '../data';
+import React, { useState } from 'react';
+import {
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  Flame,
+  Trash2,
+  Sprout,
+  Pencil,
+} from 'lucide-react';
+import { dateKey, currentStreak } from '../data';
 import Modal from './Modal';
-export default function HabitTracker({habits,setHabits}){const [offset,setOffset]=useState(0);const [adding,setAdding]=useState(false);const [name,setName]=useState('');const [emoji,setEmoji]=useState('🌱');const monday=new Date();monday.setDate(monday.getDate()-((monday.getDay()+6)%7)+offset*7);const days=Array.from({length:7},(_,i)=>{const d=new Date(monday);d.setDate(d.getDate()+i);return d});function toggle(id,key){setHabits(habits.map(h=>h.id===id?{...h,days:h.days.includes(key)?h.days.filter(d=>d!==key):[...h.days,key]}:h))}function streak(h){let d=new Date(),n=0;if(!h.days.includes(dateKey(d)))d.setDate(d.getDate()-1);while(h.days.includes(dateKey(d))){n++;d.setDate(d.getDate()-1)}return n}const done=habits.reduce((n,h)=>n+days.filter(d=>h.days.includes(dateKey(d))).length,0),total=habits.length*7;return <><div className="page-intro"><div className="eyebrow"><span/> SMALL STEPS, EVERY DAY</div><h1>Grow at your own pace <span>🌱</span></h1><p>The little things you do today become the person you are tomorrow.</p></div><div className="journal-heading"><div><h2>Your daily rituals<span className="heading-dot"/></h2><p>Build consistency. Celebrate showing up.</p></div><button className="primary-button" onClick={()=>setAdding(true)}><Plus size={17}/>New habit</button></div><div className="habit-summary panel"><div><span className="stat-icon green"><Flame size={23}/></span><div><h3>A little better, a little brighter.</h3><p>{done} moments of intention this week. Every check counts.</p></div></div><strong>{total?Math.round(done/total*100):0}<small>% this week</small></strong></div><section className="panel habit-panel"><div className="calendar-controls"><h2>{days[0].toLocaleDateString('en-US',{month:'long',day:'numeric'})} – {days[6].toLocaleDateString('en-US',{month:'short',day:'numeric'})}</h2><div><button className="icon-button" aria-label="Previous week" onClick={()=>setOffset(offset-1)}><ChevronLeft size={17}/></button><button className="today-button" onClick={()=>setOffset(0)}>This week</button><button className="icon-button" aria-label="Next week" onClick={()=>setOffset(offset+1)}><ChevronRight size={17}/></button></div></div><div className="habit-scroll"><div className="habit-matrix"><div className="habit-row habit-header"><span>YOUR HABITS</span>{days.map(d=><div key={dateKey(d)} className={dateKey(d)===dateKey()?'today-column':''}><small>{d.toLocaleDateString('en-US',{weekday:'short'})}</small><b>{d.getDate()}</b></div>)}<span>STREAK</span></div>{habits.map(h=><div className="habit-row" key={h.id}><div className="habit-name"><span>{h.emoji}</span><strong>{h.name}</strong><button className="tiny-button" aria-label={`Delete ${h.name}`} onClick={()=>{if(confirm('Remove this habit?'))setHabits(habits.filter(x=>x.id!==h.id))}}><Trash2 size={13}/></button></div>{days.map(d=><div key={dateKey(d)}><button disabled={dateKey(d)>dateKey()} className={`habit-check ${h.days.includes(dateKey(d))?'checked':''}`} aria-label={`${h.name}, ${d.toLocaleDateString()}`} aria-pressed={h.days.includes(dateKey(d))} onClick={()=>toggle(h.id,dateKey(d))}>{h.days.includes(dateKey(d))?<Check size={17}/>:<span>·</span>}</button></div>)}<span className="streak"><Flame size={16}/>{streak(h)}</span></div>)}</div></div>{!habits.length&&<div className="empty-state">Start with one small habit.</div>}<button className="add-task" onClick={()=>setAdding(true)}><Plus size={16}/>Make room for a new ritual</button></section><div className="bottom-quote">“You do not rise to the level of your goals. You fall to the level of your systems.”<span>— James Clear</span></div>{adding&&<Modal title="Plant a new habit" onClose={()=>setAdding(false)}><form className="form-content" onSubmit={e=>{e.preventDefault();setHabits([...habits,{id:crypto.randomUUID(),name:name.trim(),emoji,days:[]}]);setAdding(false);setName('')}}><label>Emoji<input value={emoji} onChange={e=>setEmoji(e.target.value)}/></label><label>Your daily ritual<input autoFocus required value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Read 20 minutes"/></label><button className="primary-button" type="submit"><Plus size={16}/>Create habit</button></form></Modal>}</>}
+import EmptyState from './EmptyState';
+import EmojiPicker from './EmojiPicker';
+export default function HabitTracker({ habits, setHabits }) {
+  const [offset, setOffset] = useState(0);
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+  const monday = new Date();
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + offset * 7);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(monday);
+    day.setDate(day.getDate() + index);
+    return day;
+  });
+  const today = dateKey();
+  function toggle(id, key) {
+    setHabits((current) =>
+      current.map((habit) =>
+        habit.id === id
+          ? {
+              ...habit,
+              days: habit.days.includes(key)
+                ? habit.days.filter((day) => day !== key)
+                : [...habit.days, key],
+            }
+          : habit,
+      ),
+    );
+  }
+  const completed = habits.reduce(
+    (count, habit) => count + days.filter((day) => habit.days.includes(dateKey(day))).length,
+    0,
+  );
+  const possible = habits.length * days.filter((day) => dateKey(day) <= today).length;
+  function add() {
+    setEditing({ id: crypto.randomUUID(), name: '', emoji: '🌱', days: [] });
+  }
+  function save(event) {
+    event.preventDefault();
+    if (!editing.name.trim()) return;
+    const habit = { ...editing, name: editing.name.trim(), emoji: editing.emoji || '🌱' };
+    setHabits((current) =>
+      current.some((item) => item.id === habit.id)
+        ? current.map((item) => (item.id === habit.id ? habit : item))
+        : [...current, habit],
+    );
+    setEditing(null);
+  }
+  return (
+    <>
+      <div className="page-intro">
+        <div className="eyebrow">
+          <span />
+          SMALL STEPS. LASTING CHANGE.
+        </div>
+        <h1>
+          Grow at your own pace.<span className="intro-sparkle">🌱</span>
+        </h1>
+        <p>Build a practice that feels good to come back to.</p>
+      </div>
+      <div className="journal-heading">
+        <div>
+          <h2>Your daily rituals</h2>
+          <p>Consistency starts with showing up. One day is enough.</p>
+        </div>
+        <button className="primary-button" onClick={add}>
+          <Plus size={19} />
+          New habit
+        </button>
+      </div>
+      {!habits.length ? (
+        <div className="panel">
+          <EmptyState
+            icon={Sprout}
+            title="Plant your first small habit."
+            description="Read a page. Take a breath. Step outside. Start with something you want to make time for."
+            action="Create your first habit"
+            onAction={add}
+          />
+        </div>
+      ) : (
+        <>
+          <div className="habit-summary panel">
+            <div>
+              <span className="stat-icon green">
+                <Sprout size={26} />
+              </span>
+              <div>
+                <h3>A little better, a little brighter.</h3>
+                <p>
+                  {completed} {completed === 1 ? 'moment' : 'moments'} of intention this week. Every
+                  check counts.
+                </p>
+              </div>
+            </div>
+            <strong>
+              {possible ? Math.round((completed / possible) * 100) : 0}
+              <small>% of days so far</small>
+            </strong>
+          </div>
+          <section className="panel habit-panel">
+            <div className="calendar-controls">
+              <h2>
+                {days[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} –{' '}
+                {days[6].toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                })}
+              </h2>
+              <div>
+                <button
+                  className="icon-button"
+                  aria-label="Previous week"
+                  onClick={() => setOffset(offset - 1)}
+                >
+                  <ChevronLeft size={19} />
+                </button>
+                <button className="today-button" onClick={() => setOffset(0)}>
+                  This week
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Next week"
+                  onClick={() => setOffset(offset + 1)}
+                >
+                  <ChevronRight size={19} />
+                </button>
+              </div>
+            </div>
+            <div
+              className="habit-scroll"
+              tabIndex={0}
+              role="region"
+              aria-label="Weekly habit completion grid, scroll horizontally for all days"
+            >
+              <table className="habit-matrix">
+                <thead>
+                  <tr>
+                    <th scope="col">Your habits</th>
+                    {days.map((day) => (
+                      <th
+                        scope="col"
+                        key={dateKey(day)}
+                        className={dateKey(day) === today ? 'today-column' : ''}
+                      >
+                        <small>{day.toLocaleDateString(undefined, { weekday: 'short' })}</small>
+                        <b>{day.getDate()}</b>
+                      </th>
+                    ))}
+                    <th scope="col">Streak</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {habits.map((habit) => (
+                    <tr key={habit.id}>
+                      <th scope="row">
+                        <div className="habit-name">
+                          <span>{habit.emoji}</span>
+                          <button
+                            aria-label={`Edit ${habit.name}`}
+                            onClick={() => setEditing({ ...habit })}
+                          >
+                            {habit.name}
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            className="tiny-button danger"
+                            aria-label={`Delete ${habit.name}`}
+                            onClick={() => setDeleting(habit)}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </th>
+                      {days.map((day) => (
+                        <td key={dateKey(day)}>
+                          <button
+                            disabled={dateKey(day) > today}
+                            className={`habit-check ${habit.days.includes(dateKey(day)) ? 'checked' : ''}`}
+                            aria-label={`${habit.name}, ${dateKey(day)}`}
+                            aria-pressed={habit.days.includes(dateKey(day))}
+                            onClick={() => toggle(habit.id, dateKey(day))}
+                          >
+                            {habit.days.includes(dateKey(day)) ? (
+                              <Check size={19} />
+                            ) : (
+                              <span>·</span>
+                            )}
+                          </button>
+                        </td>
+                      ))}
+                      <td>
+                        <span
+                          className="streak"
+                          aria-label={`${currentStreak(habit.days)} day current streak`}
+                        >
+                          <Flame size={17} />
+                          {currentStreak(habit.days)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="habit-grid-footer">
+              <span>Streaks count consecutive days through today or yesterday.</span>
+              <button className="add-task" onClick={add}>
+                <Plus size={17} />
+                Add a ritual
+              </button>
+            </div>
+          </section>
+          <div className="journal-reminder">
+            <Sprout size={17} />
+            <span>Missed a day? A fresh start is always one small step away.</span>
+          </div>
+        </>
+      )}
+      {editing && (
+        <Modal
+          title={
+            habits.some((habit) => habit.id === editing.id)
+              ? 'Edit your ritual'
+              : 'Plant a new habit'
+          }
+          onClose={() => setEditing(null)}
+        >
+          <form className="form-content" onSubmit={save}>
+            <div className="collection-icon-field">
+              <EmojiPicker
+                value={editing.emoji}
+                onChange={(emoji) => setEditing({ ...editing, emoji })}
+              />
+              <p>Choose an icon for your ritual.</p>
+            </div>
+            <label>
+              Your daily ritual
+              <input
+                autoFocus
+                required
+                maxLength={100}
+                value={editing.name}
+                onChange={(event) => setEditing({ ...editing, name: event.target.value })}
+                placeholder="What would you like to make time for?"
+              />
+            </label>
+            <button className="primary-button" type="submit">
+              <Check size={17} />
+              Save habit
+            </button>
+          </form>
+        </Modal>
+      )}
+      {deleting && (
+        <Modal title="Remove this habit?" onClose={() => setDeleting(null)}>
+          <div className="form-content">
+            <p>“{deleting.name}” and its completion history will be removed.</p>
+            <div className="dialog-actions">
+              <button className="secondary-button" onClick={() => setDeleting(null)}>
+                Keep habit
+              </button>
+              <button
+                className="danger-button"
+                onClick={() => {
+                  setHabits((current) => current.filter((habit) => habit.id !== deleting.id));
+                  setDeleting(null);
+                }}
+              >
+                Remove habit
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
