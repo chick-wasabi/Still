@@ -1,0 +1,41 @@
+# Cat companion credits and licenses
+
+Still's `public/models/still-tabby.v1.glb` combines two user-supplied assets. Their
+licenses remain separate; the combined file is not offered as a standalone asset
+pack, and the animation license does not relicense the tabby geometry or textures.
+
+## Animation skeleton and clips
+
+**Sphynx Cat – Rigged & Animated (10 Anims)** by **Animal Animator**.
+
+- Creator: https://sketchfab.com/animalanimator
+- Original: https://sketchfab.com/3d-models/sphynx-cat-rigged-animated-10-anims-0b86bde7a8b64fd7a459035b339a790f
+- License: **Creative Commons Attribution 4.0 International (CC BY 4.0)**
+- License terms: https://creativecommons.org/licenses/by/4.0/
+- Legal code: https://creativecommons.org/licenses/by/4.0/legalcode
+
+Changes for Still: fitted the skeleton to a different cat's proportions, transferred
+skin weights, scaled animation translations, exported and optimized the embedded
+clips, removed animation root translation at runtime, and added procedural poses,
+physics integration, and mouth attachments. The supplied file includes twelve
+clips despite its title. No endorsement by the creator is implied.
+
+## Tabby geometry and textures
+
+**Realistic cat – Pets for your project** by **Micael Martins**.
+
+- Creator: https://sketchfab.com/micaelrmartins
+- Original: https://sketchfab.com/3d-models/realistic-cat-pets-for-your-project-ec407d89f7304194bc04f2b4710eab8c
+- License recorded in the supplied file: **Sketchfab Standard License**
+- Terms: https://sketchfab.com/licenses
+
+Changes for Still: added skin weights and an adapted animation rig, consolidated
+materials sharing the original UV atlas, resized textures, and normalized the
+standing pet to 45 CSS pixels. This asset retains its own Standard License; it is
+not licensed under CC BY 4.0. Redistribution or reuse outside this application must
+follow that license and the applicable download terms.
+
+The original licenses, source links, authors, source-file hashes, and modification
+summary are also recorded in the derived GLB's `asset.extras`. In-app credits are
+available in Settings → About & credits. The source base-mesh model by artofaria
+was evaluated but is not included in this implementation.

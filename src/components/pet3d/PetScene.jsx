@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree, useLoader } from '@react-three/fiber';
 import {
   Physics,
   RigidBody,
@@ -9,10 +9,16 @@ import {
   useRapier,
 } from '@react-three/rapier';
 import * as THREE from 'three';
-import { createCatModel } from '../../lib/pet3d/catModel';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { CAT_ASSET_URL, createCatModel } from '../../lib/pet3d/catModel';
 import { createDirector } from '../../lib/pet3d/director';
 import { bindPetInput } from '../../lib/pet3d/input';
 import { CAT, GRAVITY, worldToScreen, worldBounds } from '../../lib/pet3d/math';
+
+// A rejected useLoader promise is cached too; retry must clear it first.
+export function clearCatAsset() {
+  useLoader.clear(GLTFLoader, CAT_ASSET_URL);
+}
 
 function Platforms({ layout }) {
   const { bounds, boxes } = layout;
@@ -127,7 +133,7 @@ function CursorModel({ group, input }) {
   );
 }
 
-function Actors({ layout, input, layer, onReady }) {
+function Actors({ layout, input, layer, onReady, gltf }) {
   const cat = useRef(),
     ball = useRef(),
     ballMesh = useRef(),
@@ -150,7 +156,7 @@ function Actors({ layout, input, layer, onReady }) {
     return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 180, 0.008, 3, false);
   }, []);
   useEffect(() => () => yarn.dispose(), [yarn]);
-  const model = useMemo(createCatModel, []),
+  const model = useMemo(() => createCatModel(gltf), [gltf]),
     currentLayout = useRef(layout);
   currentLayout.current = layout;
   const { world, rapier } = useRapier();
@@ -338,7 +344,7 @@ function Actors({ layout, input, layer, onReady }) {
     }
     if (stats.telemetry > 0.12 && p && b && layer.current) {
       stats.telemetry = 0;
-      model.byName.spine.getWorldPosition(petPoint);
+      model.pickPosition(petPoint);
       const pick = worldToScreen(petPoint.x, petPoint.y, currentLayout.current.view);
       const c = worldToScreen(p.x, p.y, currentLayout.current.view),
         toy = worldToScreen(b.x, b.y, currentLayout.current.view),
@@ -366,6 +372,8 @@ function Actors({ layout, input, layer, onReady }) {
         worldRevision: String(input.worldRevision || 0),
         unit: String(currentLayout.current.view.unit),
         standingHeight: String(model.standingHeight * currentLayout.current.view.unit),
+        animationClip: model.activeClip,
+        animationCount: String(model.animations.length),
         rasterTop: String(input.raster.top),
         cursorDocumentX: String(cursor.current?.position.x * currentLayout.current.view.unit),
         cursorDocumentY: String(-cursor.current?.position.y * currentLayout.current.view.unit),
@@ -445,7 +453,7 @@ function Actors({ layout, input, layer, onReady }) {
     </>
   );
 }
-function World({ layout, raster, input, layer, onReady, paused, reduced }) {
+function World({ layout, raster, input, layer, onReady, paused, reduced, gltf }) {
   const { camera, invalidate } = useThree();
   input.raster = raster;
   useLayoutEffect(() => {
@@ -470,7 +478,7 @@ function World({ layout, raster, input, layer, onReady, paused, reduced }) {
         numSolverIterations={8}
       >
         <Platforms layout={layout} />
-        <Actors {...{ layout, input, layer, onReady }} />
+        <Actors {...{ layout, input, layer, onReady, gltf }} />
       </Physics>
     </>
   );
@@ -485,6 +493,9 @@ export default function PetScene({
   paused,
   reduced,
 }) {
+  // Load outside Canvas so rejected downloads reach the HTML error boundary,
+  // rather than becoming uncaught errors in Fiber’s separate React root.
+  const gltf = useLoader(GLTFLoader, CAT_ASSET_URL);
   return (
     <Canvas
       orthographic
@@ -502,7 +513,7 @@ export default function PetScene({
       }}
     >
       <Suspense fallback={null}>
-        <World {...{ layout, raster, input, layer, onReady, paused, reduced }} />
+        <World {...{ layout, raster, input, layer, onReady, paused, reduced, gltf }} />
       </Suspense>
     </Canvas>
   );

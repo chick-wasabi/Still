@@ -229,41 +229,83 @@ test('3D behavior weights respect guards, fatigue, and recent decisions', async 
       sample(1).filter((x) => x === 'sleep').length * 3,
   );
 });
-test('procedural cat has a bound skeleton, reusable material groups, and distinct skeletal gaits', async () => {
+test('the shipped tabby has a weighted 108-joint rig, 12 real clips, and a 45px silhouette', async () => {
+  const { loadCatAsset } = await import('./helpers/loadCatAsset.js');
   const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
-  const model = createCatModel();
-  assert.equal(model.mesh.isSkinnedMesh, true);
-  assert.ok(
-    Math.abs(model.standingHeight * 40 - 45) < 0.01,
-    'standing kitten is calibrated to 45px',
+  const { Box3, Vector3 } = await import('three');
+  const gltf = await loadCatAsset();
+  const model = createCatModel(gltf);
+  assert.deepEqual(
+    gltf.asset.extras.sources.map((source) => source.license),
+    ['Sketchfab Standard', 'CC-BY-4.0'],
   );
-  assert.ok(model.bones.length >= 30);
+  assert.ok(gltf.asset.extras.sources.every((source) => /^[a-f0-9]{64}$/.test(source.sha256)));
+  assert.equal(model.bones.length, 108);
+  assert.equal(model.animations.length, 12);
+  assert.ok(Math.abs(model.standingHeight * 40 - 45) < 0.01);
   assert.ok(
-    model.mesh.geometry.groups.length <= 7,
-    'parts sharing material should batch into one draw',
+    Math.abs(new Box3().setFromObject(model.mesh, true).getSize(new Vector3()).y * 40 - 45) < 6,
   );
-  assert.ok(model.mesh.material[0].map?.isDataTexture, 'tabby fur is textured');
-  assert.ok(
-    model.mesh.material[0].normalMap?.isDataTexture,
-    'fine fur has a shared normal texture',
-  );
-  const weights = model.mesh.geometry.attributes.skinWeight;
-  assert.ok(
-    Array.from({ length: weights.count }, (_, i) => weights.getY(i)).some((w) => w > 0 && w < 1),
-    'limbs and tail blend between bones',
-  );
-  for (let i = 0; i < weights.count; i++)
-    assert.ok(
-      Math.abs(weights.getX(i) + weights.getY(i) + weights.getZ(i) + weights.getW(i) - 1) < 1e-7,
+  assert.equal(model.skins.length, 3, 'only three material primitives');
+  for (const skin of model.skins) {
+    const w = skin.geometry.attributes.skinWeight;
+    assert.ok(w.count > 0);
+    for (let i = 0; i < w.count; i++)
+      assert.ok(Math.abs(w.getX(i) + w.getY(i) + w.getZ(i) + w.getW(i) - 1) < 1e-5);
+  }
+  for (let i = 0; i < 60; i++) model.update('walk', i / 60, 1 / 60, 1.6);
+  const walk = model.byName.frontNear.quaternion.clone();
+  assert.equal(model.activeClip, 'Cat_Walk');
+  for (let i = 0; i < 60; i++) model.update('run', i / 60, 1 / 60, 5.7);
+  assert.equal(model.activeClip, 'Cat_Gallop_Run');
+  assert.ok(walk.angleTo(model.byName.frontNear.quaternion) > 0.1);
+  for (const mode of [
+    'groom',
+    'stalk',
+    'climb',
+    'jump',
+    'sleep',
+    'roll',
+    'stretch',
+    'scratch',
+    'purr',
+  ]) {
+    for (let i = 0; i < 30; i++) model.update(mode, i / 60, 1 / 60, 1);
+    for (const bone of model.bones) assert.ok(bone.quaternion.toArray().every(Number.isFinite));
+    assert.ok(model.mouthPosition().toArray().every(Number.isFinite));
+    assert.deepEqual(
+      model.mesh.position.toArray(),
+      [0, 0, 0],
+      'animation never owns document position',
     );
-  for (let i = 0; i < 60; i++) model.update('walk', 0.23, 1 / 60, 1);
-  const walk = model.byName.frontNear.rotation.z;
-  for (let i = 0; i < 60; i++) model.update('run', 0.23, 1 / 60, 5);
-  assert.ok(Math.abs(walk - model.byName.frontNear.rotation.z) > 0.2);
-  for (let i = 0; i < 60; i++) model.update('sleep', 2, 1 / 60);
-  assert.equal(model.byName.eyeL.scale.y, 0.08);
-  assert.ok(Number.isFinite(model.mouthPosition().x));
+  }
+  model.update('sleep', 1, 1 / 60, 0, 0, true);
+  const still = model.bones.map((b) => b.quaternion.toArray());
+  for (let i = 0; i < 120; i++) model.update('sleep', i / 60, 1 / 60, 0, 0, true);
+  assert.deepEqual(
+    model.bones.map((b) => b.quaternion.toArray()),
+    still,
+    'reduced motion has a stable pose',
+  );
+  // Disposing one mount must not invalidate the cached asset or another clone.
+  const another = createCatModel(gltf);
+  const otherHead = another.byName.head.quaternion.clone();
   model.dispose();
+  model.dispose();
+  assert.ok(another.byName.head.quaternion.equals(otherHead));
+  another.update('run', 1, 1 / 60, 5);
+  assert.ok(another.mouthPosition().toArray().every(Number.isFinite));
+  another.dispose();
+});
+test('behavior modes select authored locomotion, climbing, grooming, and jump clips', async () => {
+  const { animationForMode } = await import('../src/lib/pet3d/catModel.js');
+  assert.equal(animationForMode('walk', 1.6), 'Cat_Walk');
+  assert.equal(animationForMode('hunt', 3.4), 'Cat_Trot');
+  assert.equal(animationForMode('run', 5.7), 'Cat_Gallop_Run');
+  assert.equal(animationForMode('stalk', 1), 'Cat_Stalk_Hunt');
+  assert.equal(animationForMode('climb'), 'Cat_Climb_Tree');
+  assert.equal(animationForMode('groom'), 'Cat_Lick_Paw');
+  assert.equal(animationForMode('jump'), 'Cat_Leap_Jump');
 });
 test('Rapier applies gravity, lands a CCD rigid body, and rebounds the physics ball', async () => {
   const R = await import('@dimforge/rapier3d-compat');

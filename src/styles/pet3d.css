@@ -161,3 +161,17 @@ html[data-pet-cursor='true'] .pet3d-host * {
   text-decoration-thickness: 2px;
   color: #d8c6a4;
 }
+
+.companion-credits summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.companion-credits p {
+  margin-top: 1rem;
+  line-height: 1.7;
+}
+.companion-credits a {
+  color: var(--accent, #a7cdb3);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

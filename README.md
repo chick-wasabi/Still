@@ -37,7 +37,7 @@ Still brings your journal, tasks, and habits into one quiet corner of the intern
 
 ## 🐾 Meet your least productive teammate
 
-The cat is a procedural, 30-bone 3D character with Rapier physics and a stochastic behavior engine. Now 45 pixels tall, with soft tabby fur and a flowing tail, it walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels. It lives in the page itself: scroll away and it leaves the screen with the content, then comes back where you left it (unless it has been busy being a cat).
+The cat is a textured tabby on an adapted 108-joint rig, with 12 supplied animation clips, Rapier physics, and a stochastic behavior engine. Now 45 pixels tall, with soft tabby fur and a flowing tail, it walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels. It lives in the page itself: scroll away and it leaves the screen with the content, then comes back where you left it (unless it has been busy being a cat).
 
 - **Drag and release the cat** to toss it. Fast wall impacts can produce a brief cling before gravity files its objection.
 - **Enable Play Ball in the top-right controls** (it starts off), then throw the toy ball and let the cat decide whether this meeting could have been a chase. Play sessions end, so the rest of your dashboard still gets a visit.
@@ -93,7 +93,7 @@ Browser tests use `/usr/bin/chromium` when available, otherwise Playwright’s i
 | Persistence           | Browser localStorage; Web Crypto AES-256-GCM when PIN protection is enabled |
 | Quality checks        | Node.js test runner, Playwright, Prettier                                   |
 
-The 3D scene loads separately from the main workspace and uses an original procedural model, with no external model or texture downloads. Frame rate depends on your device and GPU. The cat has many talents; manufacturing graphics hardware is still on the roadmap of its imagination.
+The 3D scene and bundled GLB load separately from the main workspace. The model and textures are served by Still itself, with no third-party viewer or asset service. Frame rate depends on your device and GPU. The cat has many talents; manufacturing graphics hardware is still on the roadmap of its imagination.
 
 ## 🐛 Known Bugs
 
@@ -126,3 +126,13 @@ For the full workspace guide, recovery details, persistence behavior, and archit
 🌿 Stay Still. The cat probably won’t.
 
 </div>
+
+### Cat credits
+
+The tabby combines **Micael Martins’ “Realistic cat – Pets for your project”**
+(Sketchfab Standard License) with the adapted skeleton and animation clips from
+**Animal Animator’s “Sphynx Cat – Rigged & Animated (10 Anims)”**
+([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source links, separate
+license terms, and modifications. Credits are also available in Settings → About
+& credits. Models and textures load locally; no Sketchfab iframe or service is used.

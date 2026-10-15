@@ -336,6 +336,67 @@ export default function Settings({
             )}
           </section>
         )}
+        <section className="settings-section">
+          <details className="companion-credits">
+            <summary>About &amp; credits</summary>
+            <p>Still’s animated tabby brings a little mischief to your sanctuary.</p>
+            <p>
+              Animation rig and clips:{' '}
+              <a
+                href="https://sketchfab.com/3d-models/sphynx-cat-rigged-animated-10-anims-0b86bde7a8b64fd7a459035b339a790f"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Sphynx Cat – Rigged &amp; Animated (10 Anims)
+              </a>{' '}
+              by{' '}
+              <a
+                href="https://sketchfab.com/animalanimator"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Animal Animator
+              </a>
+              , licensed under{' '}
+              <a
+                href="https://creativecommons.org/licenses/by/4.0/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                CC BY 4.0
+              </a>
+              .
+            </p>
+            <p>
+              Tabby model and textures:{' '}
+              <a
+                href="https://sketchfab.com/3d-models/realistic-cat-pets-for-your-project-ec407d89f7304194bc04f2b4710eab8c"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Realistic cat – Pets for your project
+              </a>{' '}
+              by{' '}
+              <a
+                href="https://sketchfab.com/micaelrmartins"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Micael Martins
+              </a>
+              , under the{' '}
+              <a href="https://sketchfab.com/licenses" target="_blank" rel="noopener noreferrer">
+                Sketchfab Standard License
+              </a>
+              .
+            </p>
+            <p>
+              Adapted for Still: fitted skeleton, transferred skin weights, optimized textures and
+              materials, custom poses, scale, and interactive physics. The creators do not endorse
+              Still.
+            </p>
+          </details>
+        </section>
         {message && (
           <p className="success-message" role="status">
             {message}

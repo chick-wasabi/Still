@@ -126,11 +126,13 @@ export function bindPetInput({
       local = localPoint(event);
     if (
       input.catEnabled &&
-      Math.abs(local.x - catScreen.x) < view.unit * 1.2 &&
-      Math.abs(local.y - catScreen.y) < view.unit * 1.5
+      Math.abs(local.x - catScreen.x) < view.unit * 3 &&
+      Math.abs(local.y - catScreen.y) < view.unit * 2.5
     ) {
       catMesh.updateMatrixWorld(true);
-      catMesh.computeBoundingSphere();
+      catMesh.traverse((part) => {
+        if (part.isSkinnedMesh) part.computeBoundingSphere();
+      });
       pickables.push(catMesh);
     }
     if (
@@ -140,9 +142,29 @@ export function bindPetInput({
       ballMesh.updateMatrixWorld(true);
       pickables.push(ballMesh);
     }
-    const hits = raycaster.intersectObjects(pickables, false);
+    let hits = raycaster.intersectObjects(pickables, true);
+    // A few CSS pixels of real-mesh pick slop make a tiny pet touchable. There
+    // is no invisible full-body rectangle intercepting nearby HTML controls.
+    if (!hits.length && input.catEnabled && pickables.includes(catMesh)) {
+      const slop = event.pointerType === 'touch' ? 7 : 3;
+      for (const [dx, dy] of [
+        [-slop, 0],
+        [slop, 0],
+        [0, -slop],
+        [0, slop],
+      ]) {
+        const raster = input.raster;
+        ndc.set(
+          ((local.x + dx) / raster.width) * 2 - 1,
+          1 - ((local.y + dy - raster.top) / raster.height) * 2,
+        );
+        raycaster.setFromCamera(ndc, camera);
+        hits = raycaster.intersectObject(catMesh, true);
+        if (hits.length) break;
+      }
+    }
     if (!hits.length) return;
-    const kind = hits[0].object === catMesh ? 'cat' : 'ball',
+    const kind = hits[0].object === ballMesh ? 'ball' : 'cat',
       body = kind === 'cat' ? cat : ball,
       p = body.translation();
     input.drag = {

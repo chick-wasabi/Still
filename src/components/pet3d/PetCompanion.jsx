@@ -122,8 +122,15 @@ function Companion({ enabled, ballEnabled, suspended, layoutKey }) {
       restoreNativeCursor(input);
     };
   }, [input]);
-  function retry() {
+  async function retry() {
     restoreNativeCursor(input);
+    try {
+      const { clearCatAsset } = await import('./PetScene');
+      clearCatAsset();
+    } catch {
+      setFailed(true);
+      return;
+    }
     setFailed(false);
     setSupported(supportsWebGL());
     setReady(false);

@@ -35,6 +35,27 @@ async function position(page, kind = 'cat') {
   );
 }
 
+// Give jump/reaction tests an open roof. Spawn randomness and Three.js UUID
+// allocation must not decide whether a physical hop has ceiling clearance.
+async function placeOnCalendar(page) {
+  const p = await position(page);
+  const rect = await page.locator('.calendar-panel').boundingBox();
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  await expect(layer(page)).toHaveAttribute('data-dragging', 'cat');
+  await page.mouse.move(rect.x + rect.width / 2, rect.y - 35, { steps: 8 });
+  // Simulate stopping the hand before releasing, beyond the 110ms throw window.
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+  await expect(layer(page)).toHaveAttribute('data-dragging', 'none');
+  await expect(layer(page)).toHaveAttribute('data-grounded', 'true');
+  await expect
+    .poll(async () =>
+      Math.abs(Number(await layer(page).getAttribute('data-cat-y')) - (rect.y - 17)),
+    )
+    .toBeLessThan(6);
+}
+
 test('transparent WebGL scene replaces every 2D cat and leaves HTML controls interactive', async ({
   page,
 }) => {
@@ -290,13 +311,20 @@ test('autonomous jumps crouch, launch under gravity, and land on a raycast UI su
   });
   await page.reload();
   await ready(page);
-  const initial = await position(page);
+  await placeOnCalendar(page);
   await page.evaluate(() => {
     window.jumpModes = [];
-    new MutationObserver(() =>
-      jumpModes.push(document.querySelector('.pet3d-layer').dataset.behavior),
+    // Several fixed physics steps can run before a DOM observer callback.
+    // Keep each mutation's old value as well as the final state, so a real
+    // landing is still observed when the next behavior begins in the same batch.
+    new MutationObserver((records) =>
+      jumpModes.push(
+        ...records.map((record) => record.oldValue),
+        document.querySelector('.pet3d-layer').dataset.behavior,
+      ),
     ).observe(document.querySelector('.pet3d-layer'), {
       attributes: true,
+      attributeOldValue: true,
       attributeFilter: ['data-behavior'],
     });
     // Choose the jump weight after resources exist, without duplicating Three object IDs at construction.
@@ -314,7 +342,6 @@ test('autonomous jumps crouch, launch under gravity, and land on a raycast UI su
       .poll(() => page.evaluate(() => jumpModes.includes('land')), { timeout: 7000 })
       .toBe(true);
     await expect(layer(page)).toHaveAttribute('data-grounded', 'true');
-    const final = await position(page);
     expect(Number(await layer(page).getAttribute('data-cat-document-y'))).toBeGreaterThan(0);
     expect(Number(await layer(page).getAttribute('data-cat-document-y'))).toBeLessThan(
       await page.locator('.pet3d-host').evaluate((e) => e.clientHeight),
@@ -495,14 +522,30 @@ test('clicking the actual kitten cycles through four reactions and speech bubble
   page,
 }) => {
   await ready(page);
+  await placeOnCalendar(page);
+  await page.evaluate(() => {
+    window.clickModes = [];
+    new MutationObserver((records) => {
+      clickModes.push(
+        ...records.map((record) => record.oldValue),
+        document.querySelector('.pet3d-layer').dataset.behavior,
+      );
+    }).observe(document.querySelector('.pet3d-layer'), {
+      attributes: true,
+      attributeOldValue: true,
+      attributeFilter: ['data-behavior'],
+    });
+  });
   for (const [index, mode] of ['purr', 'bat', 'head-tilt', 'jump'].entries()) {
+    await page.evaluate(() => {
+      clickModes.length = 0;
+    });
     const p = await position(page);
     await page.mouse.click(p.x, p.y);
     await expect(layer(page)).toHaveAttribute('data-reaction-count', String(index + 1));
-    await expect(layer(page)).toHaveAttribute(
-      'data-behavior',
-      new RegExp(mode === 'jump' ? 'jump|land' : mode),
-    );
+    await expect
+      .poll(() => page.evaluate((expected) => clickModes.includes(expected), mode))
+      .toBe(true);
     await expect(page.locator('.pet3d-bubble')).toBeVisible();
   }
 });
@@ -560,4 +603,45 @@ test('text scratching and letter carrying preserve React text, accessible labels
   await expect(
     page.getByRole('heading', { name: 'A sanctuary for 🐈 and café thoughts', exact: true }),
   ).toBeVisible();
+});
+
+test('the bundled tabby uses authored clips and exposes complete credits in Settings', async ({
+  page,
+}) => {
+  await ready(page);
+  await expect(layer(page)).toHaveAttribute('data-animation-count', '12');
+  await expect(layer(page)).toHaveAttribute('data-standing-height', '45');
+  await page.getByRole('button', { name: 'Open settings', exact: true }).first().click();
+  await page.getByText('About & credits', { exact: true }).click();
+  const credits = page.locator('.companion-credits');
+  await expect(credits).toContainText('Animal Animator');
+  await expect(credits).toContainText('Micael Martins');
+  await expect(credits).toContainText('transferred skin weights');
+  await expect(credits.getByRole('link', { name: 'CC BY 4.0', exact: true })).toHaveAttribute(
+    'href',
+    'https://creativecommons.org/licenses/by/4.0/',
+  );
+  await expect(
+    credits.getByRole('link', { name: 'Sketchfab Standard License', exact: true }),
+  ).toHaveAttribute('href', 'https://sketchfab.com/licenses');
+});
+
+test('a failed model download preserves the workspace and can be retried', async ({ page }) => {
+  await page.route('**/models/still-tabby.v1.glb', (route) => route.abort());
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('button', { name: 'Retry 3D companion', exact: true })).toBeVisible({
+    timeout: 20000,
+  });
+  await page.mouse.move(1000, 400);
+  await expect(page.locator('html')).not.toHaveAttribute('data-pet-cursor');
+  await page.getByRole('button', { name: 'New entry', exact: true }).click();
+  await page.getByLabel('Journal content').fill('My writing survives an unavailable cat asset.');
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect(page.locator('.entry-card')).toContainText(
+    'My writing survives an unavailable cat asset.',
+  );
+  await page.unroute('**/models/still-tabby.v1.glb');
+  await page.getByRole('button', { name: 'Retry 3D companion', exact: true }).click();
+  await ready(page);
+  await expect(layer(page)).toHaveAttribute('data-animation-count', '12');
 });
