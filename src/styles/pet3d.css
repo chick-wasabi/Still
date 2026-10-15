@@ -125,8 +125,7 @@ html[data-pet-cursor='true'] .pet3d-host * {
   }
 }
 
-.pet3d-bubble,
-.pet3d-letter {
+.pet3d-bubble {
   position: absolute;
   top: 0;
   left: 0;
@@ -144,12 +143,6 @@ html[data-pet-cursor='true'] .pet3d-host * {
   font-size: 12px;
   line-height: 1.3;
   box-shadow: 0 3px 14px #0002;
-}
-.pet3d-letter {
-  color: #f3dab0;
-  font-size: 19px;
-  font-weight: 600;
-  text-shadow: 0 0 8px #dfb76e66;
 }
 ::highlight(still-cat-letter) {
   color: transparent;

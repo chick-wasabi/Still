@@ -445,7 +445,7 @@ test('fetching follows the mouth deep in the document and restores ball physics 
     assert.equal(f.ball.isKinematic(), true);
     f.input.mouth.x += 2;
     f.input.mouth.y += 0.2;
-    f.step(5);
+    f.step(30);
     assert.ok(Math.abs(f.ball.translation().x - f.input.mouth.x) < 0.01);
     assert.ok(f.ball.translation().y < -700, 'fetch remains in document space below the viewport');
     f.ai.dropBall();
@@ -484,6 +484,8 @@ test('scratching decorates text briefly and heals without modifying its content'
   const f = await petPhysicsFixture(),
     originalRandom = Math.random;
   try {
+    f.input.ballEnabled = false;
+    f.ai.syncActors();
     Math.random = () => 0.999;
     f.ball.setTranslation({ x: 30, y: -25, z: 0 }, true);
     for (let i = 0; i < 360 && !f.attributes.has('data-pet-scratched'); i++) f.step();
@@ -581,5 +583,158 @@ test('a thrown toy earns a bounded play session before ordinary cat behavior res
   } finally {
     Math.random = original;
     f.dispose();
+  }
+});
+
+test('analytic paw IK reaches a planted target and clamps unreachable targets safely', async () => {
+  const { Bone, Vector3, Group } = await import('three');
+  const { createLegIK } = await import('../src/lib/pet3d/legIK.js');
+  const root = new Group(),
+    upper = new Bone(),
+    knee = new Bone(),
+    paw = new Bone();
+  root.add(upper);
+  upper.add(knee);
+  knee.add(paw);
+  knee.position.set(0.2, -1, 0);
+  paw.position.set(-0.2, -1, 0);
+  root.updateMatrixWorld(true);
+  const solve = createLegIK(upper, knee, paw),
+    target = new Vector3(0.6, -1.6, 0);
+  solve(target);
+  assert.ok(paw.getWorldPosition(new Vector3()).distanceTo(target) < 0.001);
+  solve(new Vector3(100, -100, 0));
+  assert.ok(paw.getWorldPosition(new Vector3()).length() < 2.05);
+  assert.ok(upper.quaternion.toArray().every(Number.isFinite));
+});
+
+test('feline breathing, sleep and gaze stay alive while a stopped gait stays planted', async () => {
+  const { loadCatAsset } = await import('./helpers/loadCatAsset.js');
+  const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
+  const model = createCatModel(await loadCatAsset());
+  try {
+    for (let i = 0; i < 30; i++) model.update('sleep', i / 60, 1 / 60);
+    const breath = model.byName.chest.scale.z;
+    for (let i = 30; i < 60; i++) model.update('sleep', i / 60, 1 / 60);
+    assert.ok(Math.abs(model.byName.chest.scale.z - breath) > 0.001);
+    for (let i = 0; i < 30; i++) model.update('walk', i / 60, 1 / 60, 1.6);
+    const distance = model.gaitDistance;
+    for (let i = 0; i < 90; i++) model.update('walk', 1 + i / 60, 1 / 60, 0);
+    const leg = model.byName.frontNear.quaternion.clone();
+    for (let i = 0; i < 60; i++) model.update('walk', i / 60, 1 / 60, 0);
+    assert.equal(model.gaitDistance, distance);
+    assert.ok(model.byName.frontNear.quaternion.angleTo(leg) < 1e-6, 'no marching in place');
+    const before = model.byName.head.quaternion.clone();
+    for (let i = 0; i < 30; i++)
+      model.update('idle', i / 60, 1 / 60, 0, 1, false, 1, false, { pointerSpeed: 10, lookY: 0.5 });
+    assert.ok(model.byName.head.quaternion.angleTo(before) > 0.03);
+    for (const time of [0.25, 0.5, 0.8])
+      assert.ok(model.predictPounce(time, 1).toArray().every(Number.isFinite));
+  } finally {
+    model.dispose();
+  }
+});
+
+test('cursor capture requires real mouth contact and releases within the guide’s hold budget', async () => {
+  const f = await petPhysicsFixture();
+  try {
+    f.input.ballEnabled = false;
+    f.ai.syncActors();
+    f.cat.setTranslation({ x: 17.5, y: -8 + 0.42 + 0.015, z: 0 }, true);
+    f.cat.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    f.step(4);
+    f.ai.command('pet');
+    const p = f.cat.translation();
+    f.input.cursorActive = true;
+    f.input.pointer.inside = true;
+    f.input.worldPointer = { x: p.x + 0.8, y: p.y + 0.4, z: 0 };
+    f.input.idleDeadline = -1;
+    f.step(2);
+    assert.equal(f.ai.mode, 'stalk-ready');
+    assert.equal(f.ai.checkCursorContact({ x: p.x - 20, y: p.y }), false);
+    assert.equal(f.input.held, false);
+    assert.equal(f.ai.checkCursorContact(f.input.worldPointer), true);
+    assert.equal(f.input.captureDistance, 0);
+    f.input.cursorActive = false;
+    f.step(610);
+    assert.equal(f.input.held, false);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('enabling the ball drops it from the current view’s ceiling and starts bounded play', async () => {
+  const f = await petPhysicsFixture();
+  try {
+    f.input.ballEnabled = false;
+    f.ai.syncActors();
+    f.input.viewport = { top: -4, bottom: -25, scrollAt: 0 };
+    f.input.ballEnabled = true;
+    f.ai.syncActors();
+    assert.ok(Math.abs(f.ball.translation().y + 4.2) < 0.01);
+    assert.equal(f.ai.playingBall, true);
+    f.step(610);
+    assert.equal(f.ai.playingBall, false);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('AI arbitration honors guards and scores only reachable visual surfaces', async () => {
+  const { evaluateFelineDecision } = await import('../src/lib/pet3d/brainDecision.js');
+  const { createBehaviorBrain } = await import('../src/lib/pet3d/brain.js');
+  for (let i = 0; i < 100; i++) {
+    const d = evaluateFelineDecision({
+      dice: i / 100,
+      previous: 'walk',
+      ball: false,
+      cursor: false,
+      text: false,
+      energy: 1,
+    });
+    assert.ok(!['walk', 'hunt', 'stalk', 'steal-letter', 'scratch'].includes(d.next));
+  }
+  const brain = createBehaviorBrain();
+  assert.equal(brain.backend, 'main');
+  assert.ok(brain.take({ dice: 0.2, previous: 'idle', ball: false, text: false }).next);
+  brain.dispose();
+  brain.dispose();
+});
+
+test('a deliberate cat drop-through leaves ball and lower-platform collisions intact', async () => {
+  const R = await import('@dimforge/rapier3d-compat');
+  await R.init();
+  const world = new R.World({ x: 0, y: -26, z: 0 });
+  try {
+    const roof = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, 0, 0));
+    roof.userData = { id: 'roof' };
+    world.createCollider(R.ColliderDesc.cuboid(5, 0.04, 1), roof);
+    const floor = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -3, 0));
+    floor.userData = { id: 'floor' };
+    world.createCollider(R.ColliderDesc.cuboid(5, 0.04, 1), floor);
+    const cat = world.createRigidBody(
+      R.RigidBodyDesc.dynamic().setTranslation(-1, 1, 0).lockRotations(),
+    );
+    world.createCollider(
+      R.ColliderDesc.cuboid(0.2, 0.2, 0.2).setActiveHooks(R.ActiveHooks.FILTER_CONTACT_PAIRS),
+      cat,
+    );
+    const ball = world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(1, 1, 0));
+    world.createCollider(R.ColliderDesc.ball(0.13), ball);
+    const queue = new R.EventQueue(true),
+      hooks = {
+        filterContactPair(c1, c2, b1, b2) {
+          const other = b1 === cat.handle ? b2 : b2 === cat.handle ? b1 : null;
+          return other != null && world.getRigidBody(other).userData?.id === 'roof'
+            ? 0
+            : R.SolverFlags.COMPUTE_IMPULSE;
+        },
+      };
+    for (let i = 0; i < 120; i++) world.step(queue, hooks);
+    assert.ok(cat.translation().y < -2 && cat.translation().y > -3);
+    assert.ok(ball.translation().y > 0.1, 'the toy still lands on the upper painted border');
+    queue.free();
+  } finally {
+    world.free();
   }
 });

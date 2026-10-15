@@ -60,7 +60,7 @@ export function bindPetInput({
         : 'arrow';
     if (usable() && event.pointerType !== 'touch') {
       input.cursorActive = true;
-      document.documentElement.setAttribute('data-pet-cursor', 'true');
+      if (!input.held) document.documentElement.removeAttribute('data-pet-cursor');
     } else restoreNativeCursor(input, !interactive());
     if (!input.held) cursor.current?.position.set(input.worldPointer.x, input.worldPointer.y, 5);
   }
@@ -72,7 +72,13 @@ export function bindPetInput({
     raycaster.ray.intersectPlane(plane, point);
     return point;
   }
+  let lastPointerTime = performance.now();
   function move(event) {
+    const now = performance.now();
+    input.pointerSpeed =
+      Math.hypot(event.clientX - input.pointer.x, event.clientY - input.pointer.y) /
+      Math.max(0.016, (now - lastPointerTime) / 1000);
+    lastPointerTime = now;
     activity();
     updatePointer(event);
     if (!input.drag) return;
@@ -243,7 +249,18 @@ export function bindPetInput({
     activity();
     invalidate();
   }
+  function updateViewport(scrolled = false) {
+    const rect = input.host.getBoundingClientRect(),
+      unit = layout().view.unit;
+    input.viewport = {
+      top: Math.min(0, rect.top) / unit,
+      bottom: -(innerHeight - rect.top) / unit,
+      scrollAt: scrolled ? performance.now() : input.viewport?.scrollAt || 0,
+    };
+  }
+  updateViewport();
   function scroll() {
+    updateViewport(true);
     if (!input.pointer.inside || input.held) return;
     // Keep the unheld visual at the real pointer while the document moves beneath it.
     const local = localPoint({ clientX: input.pointer.x, clientY: input.pointer.y });
@@ -260,6 +277,7 @@ export function bindPetInput({
     if (input.drag && event.cancelable) event.preventDefault();
   }
   const listeners = [
+    [window, 'resize', () => updateViewport(), { passive: true }],
     [document, 'pointermove', move, { passive: true, capture: true }],
     [document, 'pointerdown', down, { capture: true }],
     [document, 'pointerup', release, { capture: true }],

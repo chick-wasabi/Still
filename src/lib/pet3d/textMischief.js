@@ -35,6 +35,12 @@ export function collectTextTargets(host, toWorld, sidebar = null) {
       top,
       width: rect.width,
       height: rect.height,
+      rects: Array.from(range.getClientRects(), (r) => ({
+        left: r.left - origin.left,
+        top: side ? r.top - sideRect.top : r.top - origin.top,
+        width: r.width,
+        height: r.height,
+      })),
     });
   }
   return targets;
@@ -55,8 +61,16 @@ export function createTextMischief(host, input) {
       !window.getSelection()?.toString()
     );
   }
-  function restoreLetter() {
+  function restoreLetter(animate = false) {
     clearTimeout(healTimer);
+    if (animate && input.stolenLetter && !input.reduced && !input.paused)
+      input.letterRelease = {
+        text: input.stolenLetter,
+        x: input.mouth?.x || 0,
+        y: input.mouth?.y || 0,
+        at: performance.now() / 1000,
+      };
+    else input.letterRelease = null;
     highlights?.delete('still-cat-letter');
     input.stolenLetter = null;
     stolen = null;
@@ -79,7 +93,7 @@ export function createTextMischief(host, input) {
     scratchTimer = setTimeout(healScratch, 850);
     return true;
   }
-  function steal(target, random = Math.random) {
+  function steal(target, random = Math.random, mouth = null) {
     if (!canPlay(target)) return false;
     restoreLetter();
     const text = target.node.textContent;
@@ -91,8 +105,28 @@ export function createTextMischief(host, input) {
         }));
     const letters = graphemes.filter((g) => /[\p{L}\p{N}]/u.test(g.segment));
     if (!letters.length) return false;
-    const picked = letters[Math.floor(random() * letters.length)],
-      range = document.createRange();
+    let picked = letters[Math.floor(random() * letters.length)];
+    if (mouth) {
+      const origin = host.getBoundingClientRect(),
+        side = target.element.closest('.sidebar'),
+        sideRect = side?.getBoundingClientRect();
+      let closest = Infinity;
+      for (const candidate of letters) {
+        const r = document.createRange();
+        r.setStart(target.node, candidate.index);
+        r.setEnd(target.node, candidate.index + candidate.segment.length);
+        const rect = r.getBoundingClientRect();
+        const dx = rect.left - origin.left + rect.width / 2 - mouth.x * 40;
+        const dy =
+          (side ? rect.top - sideRect.top : rect.top - origin.top) + rect.height / 2 + mouth.y * 40;
+        const distance = Math.hypot(dx, dy);
+        if (distance < closest) {
+          closest = distance;
+          picked = candidate;
+        }
+      }
+    }
+    const range = document.createRange();
     range.setStart(target.node, picked.index);
     range.setEnd(target.node, picked.index + picked.segment.length);
     if (highlights && globalThis.Highlight)
@@ -100,7 +134,8 @@ export function createTextMischief(host, input) {
     stolen = range;
     input.stolenLetter = picked.segment;
     // Restoration runs even when physics/rendering is paused or the source node is replaced.
-    healTimer = setTimeout(restoreLetter, 3500 + random() * 2500);
+    input.letterExpiresAt = performance.now() + 5000 + random() * 5000;
+    healTimer = setTimeout(() => restoreLetter(true), input.letterExpiresAt - performance.now());
     return true;
   }
   return {

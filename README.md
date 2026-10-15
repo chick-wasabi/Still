@@ -41,7 +41,7 @@ The cat is a textured tabby on an adapted 108-joint rig, with 12 supplied animat
 
 - **Drag and release the cat** to toss it. Fast wall impacts can produce a brief cling before gravity files its objection.
 - **Enable Play Ball in the top-right controls** (it starts off), then throw the toy ball and let the cat decide whether this meeting could have been a chase. Play sessions end, so the rest of your dashboard still gets a visit.
-- **Leave your pointer still for 6–8 seconds** and the cat may stalk it, grab its visual, and carry it around in its mouth.
+- **Leave your pointer still for 6–8 seconds** and the cat may stalk it, grab its visual, and carry it around in its mouth for 5–10 seconds. Your native pointer stays visible until the cat actually reaches it.
 - **Move, click, or type** to reclaim control immediately. No ransom. No CAPTCHA. Mild judgment.
 - **Click the kitten** for a cycle of purrs, paw swats, head tilts, and a tiny hop. It might even meow, ask for pets, scratch a heading, or borrow a letter. All text returns intact.
 - **Use the pet and ball buttons** for keyboard-accessible play, or pause the companion from the top bar when it is time to be suspiciously productive.
@@ -136,3 +136,5 @@ The tabby combines **Micael Martins’ “Realistic cat – Pets for your projec
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source links, separate
 license terms, and modifications. Credits are also available in Settings → About
 & credits. Models and textures load locally; no Sketchfab iframe or service is used.
+
+The [feline behavior core](docs/FELINE_BEHAVIOR.md) documents breathing, gaze, paw IK, physical cursor pounces, visual DOM surfaces, letter mischief, and bounded ball play.

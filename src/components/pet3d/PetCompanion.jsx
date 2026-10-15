@@ -177,7 +177,6 @@ function Companion({ enabled, ballEnabled, suspended, layoutKey }) {
         </div>
       )}
       <span className="pet3d-bubble" aria-hidden="true" />
-      <span className="pet3d-letter" aria-hidden="true" />
       {unavailable && fallback}
       {ready && !paused && (
         <div className="pet3d-controls" aria-label="Companion controls">

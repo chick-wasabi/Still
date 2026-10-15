@@ -100,6 +100,10 @@ for o in targets:
             "Whiskers",
         } or (p.y < -0.26 and 0.25 < p.z < 0.337):
             out = {head_name: 1.0}
+        if material_name in {"EyeWhite", "Iris", "Cornea", "Pupil"}:
+            eye_prefix = "eye.L" if p.x > 0 else "eye.R"
+            eye_name = next(b.name for b in arm.data.bones if b.name.startswith(eye_prefix))
+            out = {eye_name: 1.0}
         if material_name == "Tongue":
             out = {jaw_name: 1.0}
         top = sorted(out.items(), key=lambda x: -x[1])[:4]

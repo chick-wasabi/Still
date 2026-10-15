@@ -65,7 +65,7 @@ test('transparent WebGL scene replaces every 2D cat and leaves HTML controls int
   expect(Number(await layer(page).getAttribute('data-draw-calls'))).toBeLessThanOrEqual(16);
   expect(Number(await layer(page).getAttribute('data-triangles'))).toBeGreaterThan(5000);
   await page.mouse.move(1100, 600);
-  await expect(page.locator('html')).toHaveAttribute('data-pet-cursor', 'true');
+  await expect(page.locator('html')).not.toHaveAttribute('data-pet-cursor');
   await page.getByRole('button', { name: 'New entry', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(layer(page)).toHaveAttribute('data-paused', 'true');
@@ -157,9 +157,11 @@ test('idle cursor is held at the skeleton mouth while the cat roams and input in
 }) => {
   test.setTimeout(35000);
   await ready(page);
+  await placeOnCalendar(page);
   await page.mouse.move(1050, 600);
   await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'true', { timeout: 22000 });
-  const before = await position(page);
+  expect(Number(await layer(page).getAttribute('data-capture-distance'))).toBeLessThanOrEqual(0.18);
+  await expect(page.locator('html')).toHaveAttribute('data-pet-cursor', 'true');
   // No input: the hold survives the grab pose and subsequent autonomous decisions.
   await page.waitForTimeout(1700);
   await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'true');
@@ -179,7 +181,7 @@ test('idle cursor is held at the skeleton mouth while the cat roams and input in
   await page.evaluate(() => scrollTo(0, 0));
   await page.mouse.move(1051, 600);
   await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'false');
-  await expect(page.locator('html')).toHaveAttribute('data-pet-cursor', 'true');
+  await expect(page.locator('html')).not.toHaveAttribute('data-pet-cursor');
   await page.getByRole('button', { name: 'New entry', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.locator('html')).not.toHaveAttribute('data-pet-cursor');
@@ -294,7 +296,7 @@ test('the toy ball is directly raycast-draggable and throwing it attracts the ca
     .toBeGreaterThan(40);
   await expect(layer(page)).toHaveAttribute(
     'data-behavior',
-    /hunt|bat|run|carry|descend|jump|crouch|land/,
+    /hunt|bat|run|carry|descend|jump|crouch|land|climb/,
   );
 });
 
@@ -644,4 +646,108 @@ test('a failed model download preserves the workspace and can be retried', async
   await page.getByRole('button', { name: 'Retry 3D companion', exact: true }).click();
   await ready(page);
   await expect(layer(page)).toHaveAttribute('data-animation-count', '12');
+});
+
+test('feline arbitration runs in a worker and gracefully falls back when workers are blocked', async ({
+  page,
+}) => {
+  await ready(page);
+  await expect(layer(page)).toHaveAttribute('data-brain', 'worker');
+  await page.addInitScript(() => {
+    window.Worker = class {
+      constructor() {
+        throw new Error('Worker unavailable in this test environment');
+      }
+    };
+  });
+  await page.reload();
+  await ready(page);
+  await expect(layer(page)).toHaveAttribute('data-brain', 'main');
+  await page.mouse.move(900, 400);
+  await expect(page.locator('html')).not.toHaveAttribute('data-pet-cursor');
+  await page.getByRole('button', { name: 'New entry', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+});
+
+test('spatial mapping ignores transparent padding and uses only the painted divider edge', async ({
+  page,
+}) => {
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    const { observeDomWorld } = await import('/src/lib/pet3d/domWorld.js');
+    const host = document.querySelector('.pet3d-host');
+    const ghost = document.createElement('div'),
+      line = document.createElement('div');
+    for (const el of [ghost, line]) {
+      el.dataset.catSurface = 'panel';
+      el.style.cssText =
+        'position:absolute;top:250px;left:600px;width:240px;height:80px;background:transparent;border:0;pointer-events:none';
+      host.append(el);
+    }
+    line.style.borderRight = '2px solid rgb(255, 200, 90)';
+    let stop;
+    const measured = await new Promise((resolve) => {
+      stop = observeDomWorld(host, resolve);
+    });
+    stop();
+    const id = [...measured.elementsById].find(([id, el]) => el === line)?.[0];
+    const result = {
+      ghost: [...measured.elementsById.values()].includes(ghost),
+      edges: measured.boxes.filter((b) => b.id.startsWith(id)).map((b) => b.id.slice(id.length)),
+    };
+    ghost.remove();
+    line.remove();
+    return result;
+  });
+  expect(result.ghost).toBe(false);
+  expect(result.edges).toEqual(['-right']);
+});
+
+test('nearest-grapheme theft heals after its hold window and queues a decorative 3D release', async ({
+  page,
+}) => {
+  await ready(page);
+  await page.evaluate(async () => {
+    const { collectTextTargets, createTextMischief } =
+      await import('/src/lib/pet3d/textMischief.js');
+    const host = document.querySelector('.pet3d-host'),
+      el = document.createElement('span');
+    el.textContent = 'AB🐈CD';
+    el.style.cssText =
+      'position:absolute;left:600px;top:350px;font:32px system-ui;pointer-events:none';
+    host.append(el);
+    const target = collectTextTargets(host, (x, y) => ({ x: x / 40, y: -y / 40 })).find(
+      (t) => t.node === el.firstChild,
+    );
+    const r = document.createRange();
+    r.setStart(el.firstChild, 1);
+    r.setEnd(el.firstChild, 2);
+    const rect = r.getBoundingClientRect(),
+      origin = host.getBoundingClientRect();
+    const mouth = {
+      x: (rect.left - origin.left + rect.width / 2) / 40,
+      y: -(rect.top - origin.top + rect.height / 2) / 40,
+    };
+    const input = { reduced: false, paused: false, stolenLetter: null, mouth },
+      engine = createTextMischief(host, input);
+    window.theft = { input, engine, el, saved: localStorage.getItem('still-workspace-v2') };
+    engine.steal(target, () => 0, mouth);
+  });
+  expect(await page.evaluate(() => theft.input.stolenLetter)).toBe('B');
+  expect(await page.evaluate(() => theft.el.textContent)).toBe('AB🐈CD');
+  await expect
+    .poll(() => page.evaluate(() => theft.input.stolenLetter), { timeout: 6500 })
+    .toBe(null);
+  const after = await page.evaluate(() => {
+    const result = {
+      release: theft.input.letterRelease?.text,
+      text: theft.el.textContent,
+      same: theft.saved === localStorage.getItem('still-workspace-v2'),
+      highlight: CSS.highlights.has('still-cat-letter'),
+    };
+    theft.engine.dispose();
+    theft.el.remove();
+    return result;
+  });
+  expect(after).toEqual({ release: 'B', text: 'AB🐈CD', same: true, highlight: false });
 });

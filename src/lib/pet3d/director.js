@@ -12,6 +12,7 @@ import {
   worldBounds,
 } from './math.js';
 import { maskToyContacts, restoreToyContacts } from './toyPhysics.js';
+import { createBehaviorBrain } from './brain.js';
 import { createTextMischief } from './textMischief.js';
 
 // Physics owns translation. The director only chooses velocities/impulses and animation states.
@@ -52,7 +53,13 @@ export function createDirector({
     reactionIndex = 0,
     cursorCooldown = 0,
     ballCooldown = 0,
-    bats = 0;
+    bats = 0,
+    cursorUntil = 0,
+    cursorPlanUntil = 0,
+    cursorAim = null,
+    pendingBat = null,
+    climbSpeed = 0;
+  const brain = createBehaviorBrain();
   const recent = [],
     visits = new Map();
   const mischief =
@@ -60,7 +67,10 @@ export function createDirector({
   input.restoreMischief = () => mischief?.dispose();
   const pages = new Map(),
     scratches = new Map();
-  const fixed = (c) => c.parent()?.isFixed();
+  const fixed = (c) =>
+    c.parent()?.isFixed() &&
+    !c.isSensor() &&
+    (!input.dropThrough || c.parent().userData?.id !== input.dropThrough.id);
   function ray(point, distance = CAT.halfHeight + 0.12) {
     return world.castRay(
       new rapier.Ray({ x: point.x, y: point.y + 0.01, z: 0 }, { x: 0, y: -1, z: 0 }),
@@ -78,6 +88,21 @@ export function createDirector({
     since = time;
     until = time + duration;
     input.mode = next;
+    input.stateTime = 0;
+    input.behaviorLabel =
+      {
+        idle: 'IDLE_BREATH',
+        'stalk-ready': 'MOUSE_STALKING',
+        stalk: 'MOUSE_STALKING',
+        'cursor-pounce': 'MOUSE_POUNCE',
+        grab: 'GRAB_CURSOR',
+        hunt: 'CHASE_BALL',
+        bat: 'BAT_BALL',
+        carry: 'FETCH_BALL',
+        climb: 'VISUAL_CLIMB',
+        'run-away': 'RUN_AWAY',
+        guard: 'GUARD_TREASURE',
+      }[next] || next.toUpperCase();
     notify(next);
   }
   function say(text) {
@@ -88,6 +113,11 @@ export function createDirector({
     if (input.held) cursorCooldown = time + randomRange(18, 32);
     input.held = false;
     input.grabAt = 0;
+    input.cursorCapture = null;
+    cursorAim = null;
+    cursorUntil = 0;
+    if (typeof document !== 'undefined')
+      document.documentElement.removeAttribute('data-pet-cursor');
     cursorHunt = false;
   }
   function surfaceAt(p, l = layout()) {
@@ -177,7 +207,23 @@ export function createDirector({
       ball.collider(0).setCollisionGroups(ballOn ? toyGroups : 0);
       if (ballOn) {
         const p = cat.translation();
-        ball.setTranslation({ x: p.x + 1.2, y: p.y + 0.1, z: 0 }, true);
+        const edge = worldBounds(layout().bounds);
+        ball.setTranslation(
+          {
+            x: clamp(p.x + 1.2, edge.left + 0.2, edge.right - 0.2),
+            y: Math.min(edge.top - 0.2, (input.viewport?.top ?? edge.top) - 0.2),
+            z: 0,
+          },
+          true,
+        );
+        interestUntil = time + randomRange(6, 9);
+        bats = 0;
+        ballCooldown = 0;
+        if (catOn && grounded) {
+          releaseCursor();
+          goal = null;
+          setMode('hunt', 7);
+        }
         ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
       } else {
         interestUntil = 0;
@@ -280,19 +326,22 @@ export function createDirector({
     ballCooldown = time + randomRange(12, 25);
   }
   function startClimb(box) {
-    if (!box || box.top - box.bottom < 1 || input.drag || input.held) return false;
+    if (!box || box.top - box.bottom < 1 || input.drag) return false;
     const p = cat.translation();
     const side = p.x < (box.left + box.right) / 2 ? -1 : 1;
     const x = (side < 0 ? box.left : box.right) + side * (CAT.halfWidth + 0.025);
-    if (Math.abs(x - p.x) > 0.25 || p.y > box.top || p.y < box.bottom - 0.2) return false;
-    const goal = box.top + CAT.halfHeight + 0.15;
+    if (Math.abs(x - p.x) > 0.75 || p.y > box.top || p.y < box.bottom - 0.2) return false;
+    const roof =
+      layout().surfaces.find((s) => s.id === box.id.replace(/-(left|right)$/, '')) || box;
+    const goal = roof.top + CAT.halfHeight + 0.15;
     if (
       !Array.from({ length: 12 }, (_, i) => ({ x, y: p.y + ((goal - p.y) * i) / 11 })).every(
         (point) => clearBody(point, layout().boxes, layout().bounds),
       )
     )
       return false;
-    climbing = { box, side, x, goal };
+    climbing = { box, roof, side, x, goal };
+    climbSpeed = 0.7;
     dropBall();
     cat.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
     cat.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -331,8 +380,14 @@ export function createDirector({
       surface,
       action,
       textTarget,
-      point: textTarget?.point || { x: randomRange(surface.left, surface.right), y: surface.top },
-      expires: time + randomRange(8, 14),
+      point: textTarget?.point || {
+        x:
+          action === 'cursor'
+            ? clamp(input.worldPointer.x, surface.left, surface.right)
+            : clamp(cat.translation().x + randomRange(-4, 4), surface.left, surface.right),
+        y: surface.top,
+      },
+      expires: time + (action === 'cursor' ? randomRange(8, 12) : randomRange(4, 7)),
     };
     return pursueGoal();
   }
@@ -355,9 +410,11 @@ export function createDirector({
     if (length(p, dest) < 0.28) {
       goal = null;
       visits.set(g.surface.id, (visits.get(g.surface.id) || 0) + 1);
-      if (g.action === 'scratch') scratch(g.textTarget);
+      if (g.action === 'cursor') setMode('stalk-ready', randomRange(0.45, 0.8));
+      else if (g.action === 'retreat') setMode('guard', randomRange(1, 2));
+      else if (g.action === 'scratch') scratch(g.textTarget);
       else if (g.action === 'steal-letter') {
-        if (mischief?.steal(g.textTarget)) {
+        if (mischief?.steal(g.textTarget, Math.random, input.mouth)) {
           setMode('grab-letter', 0.8);
           say(choose(['mine now', 'mrrp?', 'a tiny souvenir']));
         } else setMode('head-tilt', 1.8);
@@ -367,9 +424,32 @@ export function createDirector({
     const current = surfaceAt(p);
     if (
       current?.id === g.surface.id &&
-      walkTo(dest.x, 'visit', Math.min(9, Math.abs(dest.x - p.x) / 1.6 + 1))
+      walkTo(
+        dest.x,
+        g.action === 'retreat' ? 'run-away' : g.action === 'cursor' ? 'stalk' : 'visit',
+        Math.min(9, Math.abs(dest.x - p.x) / 1.6 + 1),
+      )
     )
       return true;
+    if (
+      current &&
+      current.kind !== 'text' &&
+      dest.y < p.y - 0.7 &&
+      dest.x > current.left + CAT.halfWidth &&
+      dest.x < current.right - CAT.halfWidth
+    ) {
+      if (
+        Math.abs(dest.x - p.x) > 0.2 &&
+        walkTo(dest.x, g.action === 'cursor' ? 'stalk' : 'visit', 3)
+      )
+        return true;
+      input.dropThrough = { id: current.id, top: current.top, until: time + 2 };
+      cat.setLinvel({ x: 0, y: -1, z: 0 }, true);
+      airborneSince = time;
+      afterLanding = 'visit';
+      setMode('fall', 4);
+      return true;
+    }
     if (startJump(g.surface, 'visit')) return true;
     if (current) {
       const x = clamp(
@@ -394,7 +474,7 @@ export function createDirector({
       )
       .sort((a, b) => length(a.p, dest) - length(b.p, dest));
     if (bridges.slice(0, 10).some((t) => startJump(t.s, 'visit'))) return true;
-    if (current && dest.y < p.y - 1) {
+    if (current && dest.y < p.y - 1 && (!input.viewport || dest.y > input.viewport.bottom + 0.5)) {
       const side = dest.x < p.x ? -1 : 1,
         edgeX = side < 0 ? current.left : current.right;
       if (walkTo(edgeX, 'descend', 8)) {
@@ -460,25 +540,134 @@ export function createDirector({
       if (!clearBody({ x: p.x + ((dest.x - p.x) * i) / 20, y: p.y }, l.boxes, l.bounds))
         return false;
     target = dest;
-    setMode(next, duration);
+    setMode(next, Math.min(duration, randomRange(1.8, 3.8)));
     return true;
   }
   function stalk() {
     goal = null;
     cursorHunt = true;
+    cursorPlanUntil = time + 24;
+    cursorAim = { x: input.worldPointer.x, y: input.worldPointer.y };
+    setMode('stalk-ready', randomRange(0.6, 1));
+  }
+  function cursorPounce() {
+    if (!cursorAim || !input.cursorActive) return false;
     const p = cat.translation(),
-      pointer = input.worldPointer,
       l = layout();
+    input.facing = Math.sign(cursorAim.x - p.x) || input.facing;
+    // Use the current animated mouth offset, mirrored toward the target.
+    let duration = 0.55,
+      dest,
+      velocity,
+      dropId = null;
+    for (let i = 0; i < 4; i++) {
+      const predicted = input.predictPounce?.(duration, input.facing);
+      const dx =
+        predicted?.x ?? clamp(Math.abs(input.mouth.x - p.x) || 0.8, 0.5, 1.1) * input.facing;
+      const dy = predicted?.y ?? clamp(input.mouth.y - p.y || 0.4, 0.15, 0.7);
+      dest = { x: cursorAim.x - dx, y: cursorAim.y - dy, z: 0 };
+      const support = surfaceAt(p);
+      dropId =
+        support &&
+        dest.y < p.y - 0.6 &&
+        dest.x > support.left + CAT.halfWidth &&
+        dest.x < support.right - CAT.halfWidth
+          ? support.id
+          : null;
+      velocity = planLeap(
+        p,
+        dest,
+        l.boxes.filter((box) => box.id !== dropId),
+        l.bounds,
+      );
+      if (!velocity) break;
+      duration = velocity.time;
+    }
+    if (velocity) {
+      launch = { velocity, after: 'cursor', duration: velocity.time, dropId };
+      target = dest;
+      setMode('crouch', randomRange(0.22, 0.35));
+      return true;
+    }
     const near = [...l.surfaces].sort(
       (a, b) =>
-        length({ x: (a.left + a.right) / 2, y: a.top }, pointer) -
-        length({ x: (b.left + b.right) / 2, y: b.top }, pointer),
+        length({ x: clamp(dest.x, a.left, a.right), y: a.top }, dest) -
+        length({ x: clamp(dest.x, b.left, b.right), y: b.top }, dest),
     );
-    for (const s of near.slice(0, 5)) {
-      if (s === surfaceAt(p)) break;
-      if (startJump(s, 'stalk')) return;
+    for (const surface of near.slice(0, 8)) {
+      if (surface.id === surfaceAt(p)?.id) continue;
+      if (visit(surface, 'cursor')) return true;
     }
-    setMode('stalk-ready', randomRange(0.65, 1));
+    if (walkTo(dest.x, 'stalk', 2.5) && Math.abs(target.x - p.x) > 0.15) return true;
+    return false;
+  }
+  function checkCursorContact(mouth) {
+    if (
+      !cursorHunt ||
+      !cursorAim ||
+      input.held ||
+      !input.cursorActive ||
+      !['cursor-pounce', 'stalk', 'stalk-ready'].includes(mode)
+    )
+      return false;
+    const distance = Math.hypot(mouth.x - cursorAim.x, mouth.y - cursorAim.y);
+    if (distance > 0.18 || input.paused || input.reduced || input.pressed) return false;
+    input.held = true;
+    input.heldAt = time;
+    input.grabAt = time;
+    input.cursorCapture = { ...cursorAim };
+    input.captureDistance = distance;
+    cursorUntil = time + randomRange(5, 10);
+    cursorHunt = false;
+    if (typeof document !== 'undefined')
+      document.documentElement.setAttribute('data-pet-cursor', 'true');
+    setMode('grab', 0.55);
+    say('caught you!');
+    return true;
+  }
+  function retreat() {
+    const l = layout(),
+      p = cat.translation();
+    const surfaces = [...l.surfaces]
+      .filter(
+        (s) =>
+          s.id !== surfaceAt(p)?.id &&
+          (!input.viewport ||
+            (s.top < input.viewport.top - 0.7 && s.top > input.viewport.bottom + 0.5)),
+      )
+      .sort((a, b) => length({ x: b.left, y: b.top }, p) - length({ x: a.left, y: a.top }, p));
+    for (const surface of surfaces.slice(0, 12)) if (visit(surface, 'retreat')) return true;
+    const surface = surfaceAt(p);
+    if (
+      surface &&
+      walkTo(
+        p.x < (surface.left + surface.right) / 2 ? surface.right : surface.left,
+        'run-away',
+        randomRange(1.5, 3),
+      )
+    )
+      return true;
+    setMode('guard', randomRange(0.8, 1.8));
+    return false;
+  }
+  function context() {
+    return {
+      energy,
+      previous,
+      recent: [...recent],
+      cursor: false,
+      ball:
+        input.ballEnabled &&
+        !input.held &&
+        !input.stolenLetter &&
+        (time < interestUntil || (time > ballCooldown && Math.random() < 0.08)),
+      wall: true,
+      text: Boolean(layout().textTargets?.length) && !input.held && !input.carryingBall,
+      arousal: input.arousal || 0.5,
+      position: { ...cat.translation() },
+      visits: Object.fromEntries(visits),
+      dice: Math.random(),
+    };
   }
   function decide() {
     if (input.carryingBall) {
@@ -486,25 +675,18 @@ export function createDirector({
       setMode('bat', 0.8);
       return;
     }
-    if (input.held && time - input.heldAt > 4 && (Math.random() < 0.3 || time - input.heldAt > 20))
-      releaseCursor();
-    const ballInterest =
-      input.ballEnabled &&
-      !input.held &&
-      !input.stolenLetter &&
-      (time < interestUntil || (time > ballCooldown && Math.random() < 0.08));
-    const next =
-      time < interestUntil && input.ballEnabled
-        ? 'hunt'
-        : behavior({
-            energy,
-            previous,
-            recent,
-            cursor: false,
-            ball: ballInterest,
-            wall: true,
-            text: Boolean(layout().textTargets?.length) && !input.held && !input.carryingBall,
-          });
+    if (input.stolenLetter || input.held) {
+      retreat();
+      return;
+    }
+    const snapshot = context();
+    const recommendation = brain.take(snapshot);
+    const next = time < interestUntil && input.ballEnabled ? 'hunt' : recommendation.next;
+    input.brainBackend = brain.backend;
+    const nearby = (layout().textTargets || []).filter(
+      (t) => length(t.point, cat.translation()) < 7,
+    );
+    input.attention = nearby.length ? choose(nearby).point : null;
     recent.push(next);
     if (recent.length > 3) recent.shift();
     if (next === 'hunt' && time >= interestUntil) interestUntil = time + randomRange(4, 7);
@@ -526,10 +708,18 @@ export function createDirector({
     }
     if (next === 'jump' || next === 'explore') {
       const candidates = [...layout().surfaces]
-        .filter((s) => s.id !== surfaceAt(cat.translation())?.id)
+        .filter(
+          (s) =>
+            s.id !== surfaceAt(cat.translation())?.id &&
+            (!input.viewport ||
+              (s.top < input.viewport.top - 0.8 && s.top > input.viewport.bottom + 0.5)),
+        )
         .map((s) => ({ s, score: Math.random() / (1 + (visits.get(s.id) || 0) * 2) }))
         .sort((a, b) => b.score - a.score);
-      for (const { s } of candidates.slice(0, 12)) if (visit(s)) return;
+      const ranked = recommendation.routes
+        .map((id) => candidates.find((t) => t.s.id === id))
+        .filter(Boolean);
+      for (const { s } of [...ranked, ...candidates].slice(0, 16)) if (visit(s)) return;
       setMode('groom', 2);
       return;
     }
@@ -569,7 +759,7 @@ export function createDirector({
   function impactWall(id) {
     if (disposed || input.drag || mode === 'cling' || mode === 'climb' || speedBefore < 5) return;
     if (startClimb(layout().boxes.find((b) => b.id === id))) return;
-    releaseCursor();
+    if (!input.held) releaseCursor();
     cat.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
     cat.setLinvel({ x: 0, y: 0, z: 0 }, true);
     clingUntil = time + randomRange(0.55, 1);
@@ -627,6 +817,39 @@ export function createDirector({
     }
     const p = cat.translation(),
       v = cat.linvel();
+    if (
+      input.dropThrough &&
+      (time > input.dropThrough.until || p.y + CAT.halfHeight < input.dropThrough.top - 0.12)
+    )
+      input.dropThrough = null;
+    const excitement =
+      time < interestUntil || cursorHunt
+        ? 1
+        : ['sleep', 'groom', 'sit'].includes(mode)
+          ? 0.15
+          : 0.5;
+    input.arousal =
+      (input.arousal ?? 0.5) + (excitement - (input.arousal ?? 0.5)) * Math.min(1, dt * 0.8);
+    if (time - (input.brainSampleAt || -1) > 0.6) {
+      input.brainSampleAt = time;
+      brain.observe(context(), l, time);
+      input.brainBackend = brain.backend;
+    }
+    if (input.held && time >= cursorUntil) {
+      releaseCursor();
+      say('all yours');
+    }
+    if (cursorHunt && time >= cursorPlanUntil) {
+      releaseCursor();
+      goal = null;
+    }
+    if (pendingBat && time >= pendingBat.at) {
+      const toy = ball.translation();
+      if (input.ballEnabled && input.drag?.kind !== 'ball' && length(toy, pendingBat.point) < 0.8)
+        ball.applyImpulse({ x: pendingBat.direction * 0.2, y: 0.09, z: 0 }, true);
+      pendingBat = null;
+    }
+
     // Collision events may drain after several fixed steps in a slower render frame.
     // Preserve the recent pre-impact speed instead of replacing it with the solver's stopped velocity.
     speedBefore = Math.max(Math.hypot(v.x, v.y), speedBefore * Math.exp(-dt * 9));
@@ -646,7 +869,15 @@ export function createDirector({
     input.time = time;
     if (input.carryingBall) {
       if (input.drag || input.held) dropBall();
-      else ball.setNextKinematicTranslation(input.mouth);
+      else {
+        const blend = clamp((time - (input.ballGrabAt || 0)) / 0.35, 0, 1),
+          from = input.ballGrabFrom || input.mouth;
+        ball.setNextKinematicTranslation({
+          x: from.x + (input.mouth.x - from.x) * blend,
+          y: from.y + (input.mouth.y - from.y) * blend,
+          z: 0,
+        });
+      }
     }
     if (input.drag?.kind === 'cat') {
       setModeIfDifferent('drag');
@@ -676,17 +907,54 @@ export function createDirector({
         return;
       }
     }
+    if (
+      input.viewport &&
+      v.y < -1 &&
+      p.y < input.viewport.bottom + 0.6 &&
+      p.y > input.viewport.bottom - 1.2 &&
+      performance.now() - (input.viewport.scrollAt || 0) > 700 &&
+      !input.drag
+    ) {
+      const walls = l.boxes
+        .filter(
+          (b) =>
+            b.kind === 'wall' &&
+            b.top > p.y &&
+            b.bottom < p.y &&
+            Math.min(
+              Math.abs(p.x - CAT.halfWidth - b.right),
+              Math.abs(p.x + CAT.halfWidth - b.left),
+            ) < 0.8,
+        )
+        .sort((a, b) => b.top - a.top);
+      if (walls.some(startClimb)) {
+        input.scrambles = (input.scrambles || 0) + 1;
+        say('up we go');
+      }
+    }
     if (mode === 'climb' && climbing) {
-      const y = Math.min(climbing.goal, p.y + dt * 2.4);
-      cat.setNextKinematicTranslation({ x: climbing.x, y, z: 0 });
+      // Grip impulses work against scaled gravity; the body stays on the wall.
+      const grip = Math.max(0, Math.sin((time - since) * 12));
+      climbSpeed = clamp(climbSpeed + (12 * grip - GRAVITY * 0.12) * dt, 0.7, 3.4);
+      const y = Math.min(climbing.goal, p.y + dt * climbSpeed);
+      cat.setNextKinematicTranslation({
+        x: p.x + (climbing.x - p.x) * (1 - Math.exp(-dt * 18)),
+        y,
+        z: 0,
+      });
       input.facing = -climbing.side;
       if (y >= climbing.goal - 0.02 || time >= until) {
         cat.setBodyType(rapier.RigidBodyType.Dynamic, true);
-        const dest = perch(climbing.box, l.boxes, l.bounds, climbing.side < 0 ? 0 : 1);
+        const dest = perch(
+          climbing.roof || climbing.box,
+          l.boxes,
+          l.bounds,
+          climbing.side < 0 ? 0 : 1,
+        );
         if (dest && y >= climbing.goal - 0.02) {
           const velocity = planLeap({ x: climbing.x, y }, dest, l.boxes, l.bounds);
           cat.setLinvel(velocity || { x: -climbing.side * 2, y: 2, z: 0 }, true);
-        } else cat.setLinvel({ x: climbing.side * 1.5, y: 1, z: 0 }, true);
+        } else cat.setLinvel({ x: -climbing.side * 1.5, y: 1, z: 0 }, true);
         climbing = null;
         airborneSince = time;
         setMode('jump', 3);
@@ -712,7 +980,7 @@ export function createDirector({
       ball.setTranslation({ x: p.x + 1, y: p.y + 0.5, z: 0 }, true);
       ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
     }
-    if (['jump', 'fall', 'tossed'].includes(mode)) {
+    if (['jump', 'fall', 'tossed', 'cursor-pounce'].includes(mode)) {
       if (grounded && time - airborneSince > 0.12) {
         cat.setLinvel({ x: v.x * 0.15, y: v.y, z: 0 }, true);
         setMode('land', 0.24);
@@ -728,15 +996,26 @@ export function createDirector({
       if (time >= until && launch) {
         cat.setLinvel({ x: launch.velocity.x, y: launch.velocity.y, z: 0 }, true);
         airborneSince = time;
+        if (launch.dropId)
+          input.dropThrough = {
+            id: launch.dropId,
+            until: time + launch.duration + 1,
+            top: l.boxes.find((b) => b.id === launch.dropId)?.top,
+          };
         const after = launch.after;
         afterLanding = after;
         launch = null;
-        setMode('jump', 4);
+        setMode(after === 'cursor' ? 'cursor-pounce' : 'jump', 4);
         if (after === 'stalk') cursorHunt = true;
       }
       return;
     }
     if (mode === 'land' && time >= until) {
+      if (cursorHunt) {
+        goal = null;
+        setMode('stalk-ready', 0.4);
+        return;
+      }
       if (goal) {
         pursueGoal();
         return;
@@ -754,6 +1033,7 @@ export function createDirector({
       document.activeElement?.matches('input,textarea,select,[contenteditable="true"]');
     if (
       input.cursorActive &&
+      time >= interestUntil &&
       time > cursorCooldown &&
       !input.carryingBall &&
       !input.stolenLetter &&
@@ -768,17 +1048,18 @@ export function createDirector({
     }
     if (mode === 'stalk-ready' && time >= until) {
       if (cursorHunt && input.cursorActive) {
-        if (!walkTo(input.worldPointer.x, 'stalk', 4)) {
-          setMode('grab', 0.6);
-          input.held = true;
-          input.heldAt = time;
-          input.grabAt = time;
-          cursorHunt = false;
+        if (!cursorPounce()) {
+          releaseCursor();
+          setMode('head-tilt', 1);
         }
       } else decide();
       return;
     }
-    if (['walk', 'run', 'stalk', 'carry', 'descend', 'visit'].includes(mode)) {
+    if (mode === 'grab-letter' && time >= until) {
+      retreat();
+      return;
+    }
+    if (['walk', 'run', 'stalk', 'carry', 'descend', 'visit', 'run-away'].includes(mode)) {
       if (!target || Math.abs(target.x - p.x) < 0.1 || time >= until) {
         cat.setLinvel({ x: 0, y: v.y, z: 0 }, true);
         if (goal) {
@@ -786,16 +1067,16 @@ export function createDirector({
           return;
         }
         if (cursorHunt && input.cursorActive) {
-          setMode('grab', 0.6);
-          input.held = true;
-          input.heldAt = time;
-          input.grabAt = time;
-          cursorHunt = false;
-        } else decide();
+          if (!cursorPounce()) {
+            releaseCursor();
+            setMode('head-tilt', 1);
+          }
+        } else if (input.ballEnabled && time < interestUntil) setMode('hunt', 1);
+        else decide();
         return;
       }
       const direction = Math.sign(target.x - p.x),
-        speed = mode === 'run' || mode === 'descend' ? 5.7 : mode === 'stalk' ? 3.4 : 1.6;
+        speed = ['run', 'descend', 'run-away'].includes(mode) ? 5.7 : mode === 'stalk' ? 3.4 : 1.6;
       cat.setLinvel(
         { x: direction * Math.min(speed, Math.abs(target.x - p.x) * 5), y: v.y, z: 0 },
         true,
@@ -809,16 +1090,28 @@ export function createDirector({
 
       const b = ball.translation(),
         dx = b.x - p.x;
-      if (Math.hypot(dx, b.y - p.y) < 1.3 && input.drag?.kind !== 'ball') {
+      const paws = input.paws || [{ x: p.x + input.facing * 0.55, y: p.y - 0.3 }];
+      if (paws.some((paw, i) => i < 2 && length(paw, b) < 0.28) && input.drag?.kind !== 'ball') {
         if (!input.held && Math.random() < 0.45) {
           input.carryingBall = true;
+          input.ballGrabAt = time;
+          input.ballGrabFrom = { ...b };
           ball.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
           toyGroups = maskToyContacts(ball);
-          if (!walkTo(p.x + input.facing * randomRange(2, 5), 'carry', randomRange(2, 4)))
+          if (
+            !walkTo(
+              input.pointer.inside
+                ? input.worldPointer.x
+                : (worldBounds(l.bounds).left + worldBounds(l.bounds).right) / 2,
+              'carry',
+              randomRange(2, 4),
+            )
+          )
             setMode('carry', 2);
           return;
         }
-        ball.applyImpulse({ x: Math.sign(dx || 1) * 0.2, y: 0.09, z: 0 }, true);
+        input.strikeSide = bats % 2;
+        pendingBat = { at: time + 0.22, direction: Math.sign(dx || input.facing), point: { ...b } };
         if (++bats >= 2) {
           interestUntil = 0;
           ballCooldown = time + randomRange(15, 30);
@@ -826,7 +1119,7 @@ export function createDirector({
         setMode('bat', 0.8);
       } else if (Math.abs(dx) > 0.2) {
         const sameLevel = Math.abs(b.y - p.y) < 0.9;
-        if (!sameLevel || !walkTo(b.x, 'run', 3)) {
+        if (!sameLevel || !walkTo(b.x - Math.sign(dx) * 0.55, 'run', 3)) {
           const candidates = [...l.surfaces].sort(
             (a, s) =>
               length({ x: clamp(b.x, a.left, a.right), y: a.top }, b) -
@@ -860,12 +1153,13 @@ export function createDirector({
     mischief?.restoreLetter();
     if (cursorHunt || input.held || mode === 'grab') {
       releaseCursor();
-      if (!['jump', 'fall', 'tossed'].includes(mode)) setMode('idle', 1);
+      if (!['jump', 'fall', 'tossed', 'cursor-pounce'].includes(mode)) setMode('idle', 1);
     }
   }
   return {
     step,
     impactWall,
+    checkCursorContact,
     command,
     dropBall,
     interrupt,
@@ -874,6 +1168,7 @@ export function createDirector({
     syncActors,
     dispose() {
       disposed = true;
+      brain.dispose();
       mischief?.dispose();
       input.restoreMischief = null;
       input.bubble = null;

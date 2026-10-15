@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
+import { createLegIK } from './legIK.js';
 import { CAT, PET_UNIT, KITTEN_HEIGHT } from './math.js';
 
 export const CAT_ASSET_URL = `${import.meta.env?.BASE_URL || '/'}models/still-tabby.v1.glb`;
@@ -7,15 +8,15 @@ export const CAT_ASSET_URL = `${import.meta.env?.BASE_URL || '/'}models/still-ta
 // Authored clips drive the fitted tabby skeleton. Rapier remains the sole owner of
 // document-space motion: animation root motion never moves the physics body.
 export function animationForMode(mode, speed = 0) {
-  if (['run', 'descend'].includes(mode)) return 'Cat_Gallop_Run';
+  if (['run', 'descend', 'run-away'].includes(mode)) return 'Cat_Gallop_Run';
   if (['walk', 'patrol', 'visit', 'carry', 'hunt'].includes(mode))
     return Math.abs(speed) > 2.4 ? 'Cat_Trot' : 'Cat_Walk';
-  if (['stalk', 'stalk-ready', 'crouch', 'grab', 'grab-letter'].includes(mode))
-    return 'Cat_Stalk_Hunt';
+  if (['stalk', 'stalk-ready', 'crouch', 'grab-letter'].includes(mode)) return 'Cat_Stalk_Hunt';
   if (['climb', 'cling'].includes(mode)) return 'Cat_Climb_Tree';
-  if (['jump', 'fall', 'tossed', 'land'].includes(mode)) return 'Cat_Leap_Jump';
+  if (['jump', 'fall', 'tossed', 'land', 'cursor-pounce'].includes(mode)) return 'Cat_Leap_Jump';
   if (mode === 'groom') return 'Cat_Lick_Paw';
   if (mode === 'bat') return 'Cat_Pounce_Attack';
+  if (mode === 'grab' || mode === 'guard') return 'Cat_Bite_Attack';
   return 'Cat_Idle';
 }
 
@@ -67,6 +68,12 @@ export function createCatModel(gltf) {
     rearNearKnee: find('shinL') || find('shin.L'),
     rearFarKnee: find('shinR') || find('shin.R'),
     tail: find('tail_01'),
+    eyeL: find('eyeL') || find('eye.L'),
+    eyeR: find('eyeR') || find('eye.R'),
+    frontNearPaw: find('handL') || find('hand.L'),
+    frontFarPaw: find('handR') || find('hand.R'),
+    rearNearPaw: find('footL') || find('foot.L'),
+    rearFarPaw: find('footR') || find('foot.R'),
   };
   if (Object.values(byName).some((b) => !b)) throw new Error('Cat skeleton is incomplete.');
   const rest = bones.map((b) => ({
@@ -106,12 +113,85 @@ export function createCatModel(gltf) {
   // Chin tip in this fitted rig's local coordinates (before global 45px scale).
   mouth.position.set(0, 0.012, 0.008);
   byName.jaw.add(mouth);
+  const legs = ['frontNear', 'frontFar', 'rearNear', 'rearFar'].map((name, i) => {
+    const foot = byName[name + 'Paw'],
+      position = foot.getWorldPosition(new THREE.Vector3());
+    return {
+      name,
+      phase: [0, 0.5, 0.5, 0][i],
+      foot,
+      solve: createLegIK(byName[name], byName[name + 'Knee'], foot),
+      sole: position.y + CAT.halfHeight,
+      target: new THREE.Vector3(),
+      locked: false,
+      anchor: 0,
+      weight: 0,
+    };
+  });
+  const gaze = new THREE.Quaternion(),
+    gazeTarget = new THREE.Quaternion();
+  const gazeEuler = new THREE.Euler();
+  const weights = { sleep: 0, sit: 0, stretch: 0, scratch: 0, crouch: 0 };
+  let life = 0,
+    distance = 0,
+    nextSaccade = 0,
+    saccade = 0,
+    blinkAt = -Infinity,
+    nextBlink = 2 + Math.random() * 4;
+  const eyeAxes = [byName.eyeL, byName.eyeR].map((eye) => {
+    const q = eye.getWorldQuaternion(new THREE.Quaternion());
+    return ['x', 'y', 'z'].sort(
+      (a, b) =>
+        Math.abs(
+          new THREE.Vector3(
+            b === 'x' ? 1 : 0,
+            b === 'y' ? 1 : 0,
+            b === 'z' ? 1 : 0,
+          ).applyQuaternion(q).y,
+        ) -
+        Math.abs(
+          new THREE.Vector3(
+            a === 'x' ? 1 : 0,
+            a === 'y' ? 1 : 0,
+            a === 'z' ? 1 : 0,
+          ).applyQuaternion(q).y,
+        ),
+    )[0];
+  });
   const turn = new THREE.Quaternion(),
     axisX = new THREE.Vector3(1, 0, 0),
     axisY = new THREE.Vector3(0, 1, 0),
     axisZ = new THREE.Vector3(0, 0, 1);
   function rotate(bone, axis, angle) {
     if (angle) bone.quaternion.multiply(turn.setFromAxisAngle(axis, angle));
+  }
+  let probe = null,
+    probeMixer = null,
+    probeAction = null,
+    probeMouth = null;
+  const probeResult = new THREE.Vector3();
+  function predictPounce(seconds, facing) {
+    if (!probe) {
+      const body = clone(gltf.scene),
+        outer = new THREE.Group();
+      outer.add(body);
+      body.scale.copy(asset.scale);
+      body.position.copy(asset.position);
+      body.rotation.copy(asset.rotation);
+      probe = outer;
+      probeMouth = new THREE.Object3D();
+      probeMouth.position.copy(mouth.position);
+      body.getObjectByName(byName.jaw.name).add(probeMouth);
+      probeMixer = new THREE.AnimationMixer(body);
+      probeAction = probeMixer.clipAction(actions.get('Cat_Leap_Jump').getClip()).play();
+      probeAction.paused = true;
+    }
+    probe.rotation.y = facing < 0 ? Math.PI + 0.16 : -0.16;
+    probeAction.time = Math.min(1.85, 0.65 + seconds * 2);
+    probeMixer.update(0);
+    probe.updateMatrixWorld(true);
+    probeMouth.getWorldPosition(probeResult);
+    return probeResult;
   }
   let active = null,
     previousMode = '',
@@ -126,12 +206,29 @@ export function createCatModel(gltf) {
     reduced = false,
     facing = 1,
     holding = false,
+    motion = {},
   ) {
     if (disposed) return;
     const nextName = animationForMode(mode, speed),
       action = actions.get(nextName) || actions.get('Cat_Idle');
     const elapsed = Math.min(0.05, Math.max(0, dt)),
       t = reduced ? 0 : time;
+    if (!reduced) {
+      life += elapsed;
+      distance += motion.travel ?? Math.abs(speed) * elapsed;
+    }
+    const layerBlend = reduced ? 1 : 1 - Math.exp(-elapsed * 9);
+    for (const key of Object.keys(weights)) {
+      const on =
+        key === 'sit'
+          ? ['sit', 'meow', 'head-tilt'].includes(mode)
+          : key === 'scratch'
+            ? ['scratch', 'scratch-rear'].includes(mode)
+            : key === 'crouch'
+              ? ['crouch', 'stalk-ready'].includes(mode)
+              : mode === key;
+      weights[key] += ((on ? 1 : 0) - weights[key]) * layerBlend;
+    }
     if (active !== action) {
       action.reset().setEffectiveWeight(1).setEffectiveTimeScale(1).play();
       if (active) {
@@ -148,10 +245,17 @@ export function createCatModel(gltf) {
       for (const other of actions.values()) if (other !== action) other.stop();
       action.stopFading().setEffectiveWeight(1);
     }
-    const airborne = ['jump', 'fall', 'tossed', 'land'].includes(mode),
+    const airborne = ['jump', 'fall', 'tossed', 'land', 'cursor-pounce'].includes(mode),
       frozen =
         reduced || ['sleep', 'sit', 'head-tilt', 'crouch', 'stalk-ready', 'cling'].includes(mode);
-    action.paused = frozen || airborne;
+    const traveling = ['Cat_Walk', 'Cat_Trot', 'Cat_Gallop_Run', 'Cat_Stalk_Hunt'].includes(
+      nextName,
+    );
+    action.paused = frozen || airborne || traveling;
+    if (traveling && !frozen) {
+      const stride = nextName === 'Cat_Gallop_Run' ? 2.2 : nextName === 'Cat_Trot' ? 1.7 : 1.2;
+      action.time = ((distance / stride) % 1) * action.getClip().duration;
+    }
     if (frozen) action.time = mode === 'cling' ? 0.3 : 0;
     if (airborne) {
       // Use the authored tucked-flight pose during the actual physical arc;
@@ -189,22 +293,24 @@ export function createCatModel(gltf) {
     let tilt = 0,
       roll = 0,
       lower = 0;
-    const curl =
-      mode === 'sleep' ? 1 : mode === 'sit' || mode === 'meow' || mode === 'head-tilt' ? 0.5 : 0;
+    const curl = weights.sleep + weights.sit * 0.5;
     if (curl) {
       for (const b of [byName.rearNear, byName.rearFar]) rotate(b, axisX, -0.65 * curl);
       for (const b of [byName.rearNearKnee, byName.rearFarKnee]) rotate(b, axisX, 1.0 * curl);
       lower = -0.12 * curl;
     }
-    if (mode === 'sleep') {
-      rotate(byName.neck, axisX, 0.45);
-      rotate(byName.head, axisY, 0.45);
-      rotate(byName.tail, axisY, 0.85);
-      for (const b of [byName.frontNear, byName.frontFar]) rotate(b, axisX, -0.65);
-      for (const b of [byName.frontNearKnee, byName.frontFarKnee]) rotate(b, axisX, 1.1);
+    if (weights.sleep > 0.001) {
+      roll = (weights.sleep * Math.PI) / 2;
+      lower = -0.22 * weights.sleep;
+      rotate(byName.neck, axisX, 0.45 * weights.sleep);
+      rotate(byName.head, axisY, 0.45 * weights.sleep);
+      rotate(byName.tail, axisY, 0.85 * weights.sleep);
+      for (const b of [byName.frontNear, byName.frontFar]) rotate(b, axisX, -0.65 * weights.sleep);
+      for (const b of [byName.frontNearKnee, byName.frontFarKnee])
+        rotate(b, axisX, 1.1 * weights.sleep);
     }
-    if (mode === 'stretch') {
-      const amount = Math.sin(Math.min(t / 2.2, 1) * Math.PI);
+    if (weights.stretch > 0.001) {
+      const amount = Math.sin(Math.min(t / 3.5, 1) * Math.PI) * weights.stretch;
       rotate(byName.chest, axisX, 0.25 * amount);
       rotate(byName.neck, axisX, -0.22 * amount);
       for (const b of [byName.frontNear, byName.frontFar]) rotate(b, axisX, 0.3 * amount);
@@ -216,19 +322,65 @@ export function createCatModel(gltf) {
       for (const b of [byName.frontNear, byName.frontFar]) rotate(b, axisX, -0.8);
       for (const b of [byName.frontNearKnee, byName.frontFarKnee]) rotate(b, axisX, 1.2);
     }
-    if (['scratch', 'scratch-rear'].includes(mode)) {
-      tilt = mode === 'scratch-rear' ? -0.48 : -0.16;
-      rotate(byName.frontNear, axisX, -0.8 + Math.sin(t * 15) * 0.25);
-      rotate(byName.frontFar, axisX, -0.8 - Math.sin(t * 15) * 0.25);
-      rotate(byName.frontNearKnee, axisX, 0.6);
-      rotate(byName.frontFarKnee, axisX, 0.6);
+    if (weights.scratch > 0.001) {
+      tilt = (mode === 'scratch-rear' ? 0.65 : 0.32) * weights.scratch;
+      lower += (mode === 'scratch-rear' ? 0.28 : 0.15) * weights.scratch;
+      rotate(byName.frontNear, axisX, (-0.8 + Math.sin(life * 15) * 0.25) * weights.scratch);
+      rotate(byName.frontFar, axisX, (-0.8 - Math.sin(life * 15) * 0.25) * weights.scratch);
+      rotate(byName.frontNearKnee, axisX, 0.6 * weights.scratch);
+      rotate(byName.frontFarKnee, axisX, 0.6 * weights.scratch);
     }
+    if (!reduced && life >= nextBlink) {
+      blinkAt = life;
+      nextBlink = life + 3 + Math.random() * 4;
+    }
+    const blinkPhase = (life - blinkAt) / 0.18;
+    const blink =
+      blinkPhase >= 0 && blinkPhase < 1 && !reduced ? Math.sin(blinkPhase * Math.PI) * 0.9 : 0;
+    [byName.eyeL, byName.eyeR].forEach((eye, i) => {
+      eye.scale[eyeAxes[i]] *= 1 - Math.max(blink, weights.sleep * 0.94);
+    });
     if (mode === 'land') lower = -0.09 * Math.exp(-t * 10);
+    if (mode === 'bat')
+      rotate(
+        motion.strikeSide ? byName.frontFar : byName.frontNear,
+        axisX,
+        -Math.sin(Math.min(t / 0.7, 1) * Math.PI) * 0.35,
+      );
     if (mode === 'purr') rotate(byName.chest, axisX, Math.sin(t * 27) * 0.008);
     if (mode === 'head-tilt') rotate(byName.head, axisZ, 0.24 + Math.sin(t * 2) * 0.08);
     if (mode === 'meow' || holding)
       rotate(byName.jaw, axisX, holding ? 0.12 : Math.max(0, Math.sin(t * 5)) * 0.18);
-    if (!locomotion && !airborne && !reduced) rotate(byName.head, axisY, look * 0.12 * facing);
+    // Breathing never resets at a behavior boundary; spring-loaded crouches
+    // compress the back while paw IK keeps contact with the actual visual ledge.
+    const breath = reduced ? 0 : Math.sin(life * 2.0) * 0.02;
+    byName.chest.scale.x *= 1 + breath;
+    byName.chest.scale.z *= 1 + breath;
+    byName.spine.scale.z *= 1 - weights.crouch * 0.12 + breath * 0.35;
+    lower -= weights.crouch * 0.12;
+    if (!reduced) {
+      if (life >= nextSaccade) {
+        nextSaccade = life + 0.2 + Math.random() * 0.55;
+        saccade = (Math.random() - 0.5) * 0.07;
+      }
+      const tracking = motion.pointerSpeed == null || motion.pointerSpeed < 350;
+      gazeEuler.set(
+        THREE.MathUtils.clamp(motion.lookY || 0, -1, 1) * 0.12,
+        (tracking ? look * 0.24 * facing : 0) + saccade,
+        0,
+      );
+      gazeTarget.setFromEuler(gazeEuler);
+      gaze.slerp(gazeTarget, 1 - Math.exp(-elapsed * 8));
+      byName.head.quaternion.multiply(gaze);
+      rotate(byName.eyeL, axisY, look * 0.12);
+      rotate(byName.eyeR, axisY, look * 0.12);
+      if (Math.sin(life * 1.37) > 0.94 || mode === 'stalk-ready') {
+        rotate(byName.earL, axisX, Math.sin(life * 22) * 0.07);
+        rotate(byName.earR, axisX, -Math.sin(life * 19) * 0.07);
+      }
+      if (holding) rotate(byName.jaw, axisX, Math.sin(life * 9) * 0.06);
+    }
+
     if (previousMode === 'roll' && mode !== 'roll')
       pivot.rotation.x =
         THREE.MathUtils.euclideanModulo(pivot.rotation.x + Math.PI, Math.PI * 2) - Math.PI;
@@ -236,6 +388,45 @@ export function createCatModel(gltf) {
     pivot.rotation.x = THREE.MathUtils.lerp(pivot.rotation.x, roll, smooth);
     pivot.position.y = THREE.MathUtils.lerp(pivot.position.y, lower, smooth);
     mesh.updateMatrixWorld(true);
+    for (const leg of legs) {
+      const sprint = nextName === 'Cat_Gallop_Run';
+      const phase =
+        (distance / (sprint ? 2.2 : nextName === 'Cat_Trot' ? 1.7 : 1.2) +
+          (sprint ? [0, 0.12, 0.5, 0.62][legs.indexOf(leg)] : leg.phase)) %
+        1;
+      const stance = !traveling || phase < (sprint ? 0.48 : 0.62);
+      const enabled =
+        !reduced &&
+        motion.grounded &&
+        motion.sampleGround &&
+        stance &&
+        !airborne &&
+        !['climb', 'cling', 'drag', 'roll', 'groom', 'bat'].includes(mode) &&
+        curl < 0.15 &&
+        (weights.scratch < 0.15 || leg.name.startsWith('rear'));
+      leg.weight += ((enabled ? 1 : 0) - leg.weight) * (1 - Math.exp(-elapsed * 18));
+      if (!enabled) {
+        if (leg.locked && leg.weight > 0.01 && motion.grounded && !airborne && curl < 0.15) {
+          leg.target.set(leg.anchor, leg.floor + leg.sole, leg.target.z);
+          leg.solve(leg.target, leg.weight);
+        } else leg.locked = false;
+        continue;
+      }
+      leg.foot.getWorldPosition(leg.target);
+      const floor = motion.sampleGround(leg.target.x, leg.target.y);
+      if (floor == null || Math.abs(leg.target.y - (floor + leg.sole)) > 0.65) {
+        leg.locked = false;
+        continue;
+      }
+      if (!leg.locked || Math.abs(leg.anchor - leg.target.x) > 0.8) {
+        leg.anchor = leg.target.x;
+        leg.locked = true;
+      }
+      leg.floor = floor;
+      leg.target.x = leg.anchor;
+      leg.target.y = floor + leg.sole;
+      leg.solve(leg.target, leg.weight);
+    }
     previousMode = mode;
   }
   update('idle', 0, 0, 0);
@@ -247,6 +438,16 @@ export function createCatModel(gltf) {
     byName,
     skeleton: skins[0].skeleton,
     animations: gltf.animations.map((a) => a.name),
+    predictPounce,
+    pawPositions(targets) {
+      legs.forEach((leg, i) => leg.foot.getWorldPosition(targets[i]));
+    },
+    attachToMouth(object) {
+      mouth.attach(object);
+    },
+    get gaitDistance() {
+      return distance;
+    },
     get activeClip() {
       return clipName;
     },
@@ -260,6 +461,10 @@ export function createCatModel(gltf) {
     dispose() {
       if (disposed) return;
       disposed = true;
+      probeMixer?.stopAllAction();
+      probe?.traverse((o) => {
+        if (o.isSkinnedMesh) o.skeleton.dispose();
+      });
       mixer.stopAllAction();
       mixer.uncacheRoot(asset);
       new Set(skins.map((s) => s.skeleton)).forEach((s) => s.dispose());

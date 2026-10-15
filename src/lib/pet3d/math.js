@@ -1,3 +1,4 @@
+// 9.81 m/s² at about 106 CSS pixels per metre, divided by 40 pixels/world unit.
 export const GRAVITY = 26;
 export const PET_UNIT = 40;
 export const KITTEN_HEIGHT = 45;
@@ -45,6 +46,7 @@ export function clearBody(point, boxes, bounds) {
     return false;
   return !boxes.some(
     (b) =>
+      !b.sensor &&
       point.x + CAT.halfWidth > b.left + 0.015 &&
       point.x - CAT.halfWidth < b.right - 0.015 &&
       point.y + CAT.halfHeight > b.bottom + 0.015 &&
@@ -122,6 +124,7 @@ export function behavior(
     wall = false,
     text = false,
     recent = [],
+    arousal = 0.5,
   },
   random = Math.random,
 ) {
@@ -132,7 +135,7 @@ export function behavior(
     ['sit', 1.2],
     ['groom', 1.5],
     ['meow', 1.2],
-    ['run', 1.8],
+    ['run', 1.8 * (0.5 + arousal)],
     ['stretch', 1.5],
     ['roll', 1.2],
     ['sleep', energy < 0.35 ? 5 : 0.8],
@@ -141,7 +144,7 @@ export function behavior(
     ['stalk', cursor ? 2 : 0],
     ['climb', wall ? 1.3 : 0],
     ['scratch', text ? 1.6 : 0],
-    ['steal-letter', text ? 1.2 : 0],
+    ['steal-letter', text ? 0.8 + arousal * 2 : 0],
   ];
   const available = weights
     .filter(([name, weight]) => weight && name !== previous)

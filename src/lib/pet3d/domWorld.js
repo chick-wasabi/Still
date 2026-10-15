@@ -28,11 +28,27 @@ export function observeDomWorld(host, onChange) {
       elementsById = new Map();
     const elements = [
       ...host.querySelectorAll(
-        '[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1,.habit-matrix tr,.calendar-day,.sidebar .nav-item,.sidebar .brand,.sidebar .profile-button',
+        '.sidebar,[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1,.habit-matrix tr,.calendar-day,.sidebar .nav-item,.sidebar .brand,.sidebar .profile-button',
       ),
     ];
     for (const element of elements) {
-      if (!element.getClientRects().length) continue;
+      if (!element.getClientRects().length || element.closest('.pet3d-layer')) continue;
+      const style = getComputedStyle(element);
+      const opaque = (color) =>
+        color &&
+        color !== 'transparent' &&
+        !/(?:rgba\([^)]*,|rgb\([^)]*\/)\s*0(?:\.0+)?\s*\)$/.test(color);
+      const bordered = ['Top', 'Right', 'Bottom', 'Left'].some(
+        (side) =>
+          parseFloat(style['border' + side + 'Width']) > 0 &&
+          opaque(style['border' + side + 'Color']),
+      );
+      const filled =
+        !element.matches('.sidebar') &&
+        (opaque(style.backgroundColor) || style.backgroundImage !== 'none');
+      // Transparent wrappers and their padding never become solid walls. Their
+      // text is measured independently below, at visible line edges.
+      if (!bordered && !filled) continue;
       const heading =
         element.dataset.catSurface === 'header'
           ? element.querySelector('h1,h2,h3')
@@ -58,7 +74,7 @@ export function observeDomWorld(host, onChange) {
       const kind =
         element.dataset.catSurface ||
         (element.matches('.entry-card') ? 'journal' : heading ? 'header' : 'panel');
-      const hollow = element.matches('.calendar-panel,.habit-panel,.entry-card');
+      const hollow = bordered || element.matches('.calendar-panel,.habit-panel,.entry-card');
       const thin =
         kind === 'header' ||
         kind === 'collection' ||
@@ -74,35 +90,45 @@ export function observeDomWorld(host, onChange) {
         bottom: thin || hollow ? a.y - 0.045 : b.y,
       };
       if (box.right - box.left < 0.1) continue;
-      boxes.push(box);
+      const edgeVisible = (side) =>
+        filled ||
+        (parseFloat(style['border' + side + 'Width']) > 0 &&
+          opaque(style['border' + side + 'Color']));
+      if (edgeVisible('Top')) boxes.push(box);
       if (hollow) {
-        boxes.push({
-          id: box.id + '-left',
-          kind: 'wall',
-          left: a.x,
-          right: a.x + 0.035,
-          top: a.y,
-          bottom: b.y,
-        });
-        boxes.push({
-          id: box.id + '-right',
-          kind: 'wall',
-          left: b.x - 0.035,
-          right: b.x,
-          top: a.y,
-          bottom: b.y,
-        });
-        boxes.push({
-          id: box.id + '-bottom',
-          kind: 'panel',
-          left: a.x,
-          right: b.x,
-          top: b.y + 0.035,
-          bottom: b.y,
-        });
+        if (edgeVisible('Left'))
+          boxes.push({
+            sensor: element.matches('.sidebar'),
+            id: box.id + '-left',
+            kind: 'wall',
+            left: a.x,
+            right: a.x + 0.035,
+            top: a.y,
+            bottom: b.y,
+          });
+        if (edgeVisible('Right'))
+          boxes.push({
+            sensor: element.matches('.sidebar'),
+            id: box.id + '-right',
+            kind: 'wall',
+            left: b.x - 0.035,
+            right: b.x,
+            top: a.y,
+            bottom: b.y,
+          });
+        if (edgeVisible('Bottom'))
+          boxes.push({
+            id: box.id + '-bottom',
+            kind: 'panel',
+            left: a.x,
+            right: b.x,
+            top: b.y + 0.035,
+            bottom: b.y,
+          });
       }
       elementsById.set(box.id, heading || element.querySelector('h2,h3,.sticky-title') || element);
       if (
+        edgeVisible('Top') &&
         top > CAT.halfHeight * 2 * view.unit + 4 &&
         top < view.height - 4 &&
         box.right - box.left > CAT.halfWidth * 2 + 0.1
@@ -110,26 +136,40 @@ export function observeDomWorld(host, onChange) {
         surfaces.push(box);
     }
     const textTargets = collectTextTargets(host, (x, y) => screenToWorld(x, y, view));
+    const fontMetrics = new Map();
+    const measure = document.createElement('canvas').getContext('2d');
     textTargets.forEach((target) => {
-      if (target.width < CAT.halfWidth * 2 * view.unit + 6 || target.top < 55) return;
       if (!textIds.has(target.node)) textIds.set(target.node, `text-${nextId++}`);
-      const a = screenToWorld(target.left, target.top + target.height + 9, view),
-        b = screenToWorld(
-          Math.min(view.width, target.left + target.width),
-          target.top + target.height + 10,
-          view,
+      const style = getComputedStyle(target.element),
+        font = style.font || `${style.fontSize} ${style.fontFamily}`;
+      if (!fontMetrics.has(font)) {
+        measure.font = font;
+        const ink = measure.measureText('Hg');
+        fontMetrics.set(
+          font,
+          (ink.actualBoundingBoxAscent || parseFloat(style.fontSize) * 0.75) +
+            (ink.actualBoundingBoxDescent || parseFloat(style.fontSize) * 0.15),
         );
-      const ledge = {
-        id: textIds.get(target.node),
-        kind: 'text',
-        left: a.x,
-        right: b.x,
-        top: a.y,
-        bottom: b.y,
-      };
-      boxes.push(ledge);
-      surfaces.push(ledge);
-      target.surface = ledge;
+      }
+      for (const [i, rect] of (target.rects || [target]).entries()) {
+        if (rect.width < 3 || rect.top < 55 || rect.top > view.height) continue;
+        const inkTop = rect.top + Math.max(0, (rect.height - fontMetrics.get(font)) / 2);
+        const a = screenToWorld(Math.max(0, rect.left), inkTop, view),
+          b = screenToWorld(Math.min(view.width, rect.left + rect.width), inkTop + 1, view);
+        const ledge = {
+          id: textIds.get(target.node) + '-' + i,
+          kind: 'text',
+          left: a.x,
+          right: b.x,
+          top: a.y,
+          bottom: b.y,
+        };
+        boxes.push(ledge);
+        if (ledge.right - ledge.left > CAT.halfWidth * 2 + 0.08) {
+          surfaces.push(ledge);
+          if (!target.surface) target.surface = ledge;
+        }
+      }
     });
     const bounds = {
       width: view.width / view.unit,

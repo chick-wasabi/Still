@@ -6,12 +6,14 @@ import {
   CuboidCollider,
   BallCollider,
   useBeforePhysicsStep,
+  useFilterContactPair,
   useRapier,
 } from '@react-three/rapier';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CAT_ASSET_URL, createCatModel } from '../../lib/pet3d/catModel';
 import { createDirector } from '../../lib/pet3d/director';
+import { createMouthProps } from '../../lib/pet3d/mouthProps.js';
 import { bindPetInput } from '../../lib/pet3d/input';
 import { CAT, GRAVITY, worldToScreen, worldBounds } from '../../lib/pet3d/math';
 
@@ -57,6 +59,7 @@ function Platforms({ layout }) {
         >
           <CuboidCollider
             args={[(box.right - box.left) / 2, (box.top - box.bottom) / 2, 0.65]}
+            sensor={Boolean(box.sensor)}
             friction={0.9}
             restitution={0.05}
           />
@@ -103,7 +106,7 @@ function CursorModel({ group, input }) {
   useFrame(() => {
     const g = group.current;
     if (!g) return;
-    g.visible = input.cursorActive && !input.paused && !input.reduced;
+    g.visible = input.held && !input.paused && !input.reduced;
     arrow.current.visible = input.cursorType !== 'text' || input.held;
     text.current.visible = !arrow.current.visible;
   });
@@ -161,11 +164,46 @@ function Actors({ layout, input, layer, onReady, gltf }) {
   currentLayout.current = layout;
   const { world, rapier } = useRapier();
   const { camera, scene, invalidate, gl, setDpr } = useThree();
+  useFilterContactPair((c1, c2, b1, b2) => {
+    const handle = cat.current?.handle;
+    const other = b1 === handle ? b2 : b2 === handle ? b1 : null;
+    const id = other == null ? null : world.getRigidBody(other)?.userData?.id;
+    return input.dropThrough && input.dropThrough.id === id
+      ? 0
+      : rapier.SolverFlags.COMPUTE_IMPULSE;
+  });
   const mouth = useMemo(() => new THREE.Vector3(), []);
+  input.predictPounce = model.predictPounce;
+  const props = useMemo(() => createMouthProps(model, scene), [model, scene]);
+  useEffect(() => () => props.dispose(), [props]);
+  const paws = useMemo(() => Array.from({ length: 4 }, () => new THREE.Vector3()), []);
+  const cursorWorld = useMemo(() => new THREE.Vector3(), []);
+  const motion = useMemo(
+    () => ({
+      grounded: false,
+      lookY: 0,
+      pointerSpeed: 0,
+      sampleGround(x, y) {
+        const hit = world.castRayAndGetNormal(
+          new rapier.Ray({ x, y: y + 0.35, z: 0 }, { x: 0, y: -1, z: 0 }),
+          1.1,
+          true,
+          undefined,
+          undefined,
+          undefined,
+          cat.current,
+          (collider) => collider.parent()?.isFixed() && !collider.isSensor(),
+        );
+        return hit && hit.normal.y > 0.6 ? y + 0.35 - hit.timeOfImpact : null;
+      },
+    }),
+    [world, rapier],
+  );
   const petPoint = useMemo(() => new THREE.Vector3(), []);
   const cursorPoint = useMemo(() => new THREE.Vector3(), []);
   const frameStats = useRef({ frames: 0, total: 0, telemetry: 0, dpr: 1 });
   useEffect(() => {
+    cat.current.collider(0).setActiveHooks(rapier.ActiveHooks.FILTER_CONTACT_PAIRS);
     const ai = createDirector({
       cat: cat.current,
       ball: ball.current,
@@ -244,7 +282,7 @@ function Actors({ layout, input, layer, onReady, gltf }) {
     if (visual.current) visual.current.visible = input.catEnabled;
     if (ballVisual.current) ballVisual.current.visible = input.ballEnabled;
     const mode = input.reduced ? 'sleep' : input.mode;
-    if (visual.current && input.catEnabled) {
+    if (visual.current && input.catEnabled && cat.current) {
       const target = input.facing < 0 ? Math.PI + 0.16 : -0.16;
       visual.current.rotation.y = THREE.MathUtils.damp(
         visual.current.rotation.y,
@@ -253,9 +291,22 @@ function Actors({ layout, input, layer, onReady, gltf }) {
         Math.min(dt, 0.05),
       );
       visual.current.updateMatrixWorld(true);
-      const look = input.cursorActive
-        ? THREE.MathUtils.clamp((input.worldPointer.x - input.catPosition.x) / 3, -1, 1)
-        : 0;
+      const attention =
+        input.cursorActive &&
+        Math.hypot(
+          input.worldPointer.x - input.catPosition.x,
+          input.worldPointer.y - input.catPosition.y,
+        ) < 7
+          ? input.worldPointer
+          : input.attention || input.catPosition;
+      const look = THREE.MathUtils.clamp((attention.x - input.catPosition.x) / 3, -1, 1);
+      const body = cat.current.translation();
+      motion.travel = motion.lastX == null || input.drag ? 0 : Math.abs(body.x - motion.lastX);
+      motion.lastX = body.x;
+      motion.grounded = input.grounded;
+      motion.lookY = (attention.y - input.catPosition.y) / 3;
+      motion.pointerSpeed = input.pointerSpeed;
+      motion.strikeSide = input.strikeSide || 0;
       model.update(
         mode,
         input.stateTime,
@@ -264,26 +315,42 @@ function Actors({ layout, input, layer, onReady, gltf }) {
         look,
         input.reduced,
         input.facing,
-        input.held || input.carryingBall,
+        input.held || input.carryingBall || Boolean(input.stolenLetter),
+        motion,
       );
     }
     model.mouthPosition(mouth);
     input.mouth.x = mouth.x;
     input.mouth.y = mouth.y;
+    model.pawPositions(paws);
+    input.paws = paws;
+    director.current?.checkCursorContact(mouth);
+    props.update(input, performance.now() / 1000);
     if (cursor.current) {
       if (input.held) {
-        model.mouthPosition(mouth);
-        const t = THREE.MathUtils.clamp((input.time - input.grabAt) / 0.45, 0, 1);
-        cursorPoint
-          .set(input.worldPointer.x, input.worldPointer.y, 5)
-          .lerp(mouth, t * t * (3 - 2 * t));
-        cursor.current.position.copy(cursorPoint);
-        cursor.current.position.z += 0.08;
-        cursor.current.rotation.z = Math.sin(input.stateTime * 3) * 0.16 - 0.3;
+        const t = THREE.MathUtils.clamp((input.time - input.grabAt) / 0.12, 0, 1);
+        if (t < 1) {
+          if (cursor.current.parent !== scene) scene.attach(cursor.current);
+          cursorPoint
+            .set(input.cursorCapture.x, input.cursorCapture.y, 5)
+            .lerp(mouth, t * t * (3 - 2 * t));
+          cursor.current.position.copy(cursorPoint);
+          cursor.current.position.z += 0.08;
+        } else {
+          if (
+            cursor.current.parent !== model.byName.jaw &&
+            cursor.current.parent?.name !== 'Still mouth attachment'
+          )
+            model.attachToMouth(cursor.current);
+          cursor.current.position.set(0, 0, 0);
+        }
+        cursor.current.rotation.z = Math.sin(input.stateTime * 5) * 0.12 - 0.3;
       } else {
+        if (cursor.current.parent !== scene) scene.attach(cursor.current);
         cursor.current.position.set(input.worldPointer.x, input.worldPointer.y, 5);
         cursor.current.rotation.z = 0;
       }
+      cursor.current.getWorldPosition(cursorWorld);
     }
     const p = cat.current?.translation(),
       b = ball.current?.translation();
@@ -297,8 +364,7 @@ function Actors({ layout, input, layer, onReady, gltf }) {
       ballShadow.current.scale.set(0.28, 0.03, 1);
       ballShadow.current.visible = input.ballEnabled;
     }
-    const bubble = layer.current?.querySelector('.pet3d-bubble'),
-      letter = layer.current?.querySelector('.pet3d-letter');
+    const bubble = layer.current?.querySelector('.pet3d-bubble');
     if (bubble && p) {
       const show =
         input.catEnabled &&
@@ -311,15 +377,6 @@ function Actors({ layout, input, layer, onReady, gltf }) {
         if (bubble.textContent !== input.bubble.text) bubble.textContent = input.bubble.text;
         const view = currentLayout.current.view;
         bubble.style.transform = `translate3d(${Math.max(8, Math.min(view.width - 110, p.x * view.unit + 15))}px,${-p.y * view.unit - 60}px,0)`;
-      }
-    }
-    if (letter) {
-      const show =
-        input.catEnabled && !input.paused && !input.reduced && Boolean(input.stolenLetter);
-      letter.style.display = show ? 'block' : 'none';
-      if (show) {
-        if (letter.textContent !== input.stolenLetter) letter.textContent = input.stolenLetter;
-        letter.style.transform = `translate3d(${mouth.x * currentLayout.current.view.unit + 2}px,${-mouth.y * currentLayout.current.view.unit - 9}px,0) rotate(${Math.sin(input.time * 3) * 12}deg)`;
       }
     }
     const stats = frameStats.current;
@@ -356,6 +413,7 @@ function Actors({ layout, input, layer, onReady, gltf }) {
         catY: (c.y + rect.top).toFixed(1),
         ballX: (toy.x + rect.left).toFixed(1),
         ballY: (toy.y + rect.top).toFixed(1),
+        ballSpeed: String(Math.hypot(ball.current.linvel().x, ball.current.linvel().y)),
         catDocumentX: c.x.toFixed(2),
         catDocumentY: c.y.toFixed(2),
         ballDocumentX: toy.x.toFixed(2),
@@ -374,9 +432,18 @@ function Actors({ layout, input, layer, onReady, gltf }) {
         standingHeight: String(model.standingHeight * currentLayout.current.view.unit),
         animationClip: model.activeClip,
         animationCount: String(model.animations.length),
+        brain: input.brainBackend || 'main',
+        cursorEligible: String(input.cursorActive),
+        droppingThrough: input.dropThrough?.id || '',
+        felineState: input.behaviorLabel || 'IDLE_BREATH',
+        captureDistance: String(input.captureDistance ?? -1),
+        gaitDistance: String(model.gaitDistance),
+        letterReleasing: String(
+          Boolean(input.letterRelease && performance.now() / 1000 - input.letterRelease.at < 0.7),
+        ),
         rasterTop: String(input.raster.top),
-        cursorDocumentX: String(cursor.current?.position.x * currentLayout.current.view.unit),
-        cursorDocumentY: String(-cursor.current?.position.y * currentLayout.current.view.unit),
+        cursorDocumentX: String(cursorWorld.x * currentLayout.current.view.unit),
+        cursorDocumentY: String(-cursorWorld.y * currentLayout.current.view.unit),
         grounded: String(input.grounded),
         holdingCursor: String(input.held),
         dragging: input.drag?.kind || 'none',
