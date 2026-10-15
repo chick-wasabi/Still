@@ -606,7 +606,7 @@ test('the bundled tabby uses authored clips and exposes complete credits in Sett
   page,
 }) => {
   await ready(page);
-  await expect(layer(page)).toHaveAttribute('data-animation-count', '25');
+  await expect(layer(page)).toHaveAttribute('data-animation-count', '26');
   await expect(layer(page)).toHaveAttribute('data-standing-height', '45');
   await page.getByRole('button', { name: 'Open settings', exact: true }).first().click();
   await page.getByText('About & credits', { exact: true }).click();
@@ -640,7 +640,7 @@ test('a failed model download preserves the workspace and can be retried', async
   await page.unroute('**/models/still-tabby.v1.glb');
   await page.getByRole('button', { name: 'Retry 3D companion', exact: true }).click();
   await ready(page);
-  await expect(layer(page)).toHaveAttribute('data-animation-count', '25');
+  await expect(layer(page)).toHaveAttribute('data-animation-count', '26');
 });
 
 test('feline arbitration runs in a worker and gracefully falls back when workers are blocked', async ({

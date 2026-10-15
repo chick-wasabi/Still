@@ -20,6 +20,86 @@ test.beforeEach(async ({ page }) => {
 });
 const layer = (page) => page.locator('.pet3d-layer');
 
+test('sitting and the seated loaf transition stay grounded on the New entry button', async ({
+  page,
+}) => {
+  test.setTimeout(45000);
+  await page.getByLabel('Preview cat pose').selectOption('sit');
+  const id = await page.evaluate(() => {
+    const d = document.querySelector('.pet3d-layer').__petDebug;
+    const surface = d.layout.current.surfaces.find((s) => s.kind === 'button');
+    d.cat.setTranslation(
+      { x: (surface.left + surface.right) / 2, y: surface.top + 0.435, z: 0 },
+      true,
+    );
+    d.cat.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    return surface.id;
+  });
+  await expect(layer(page)).toHaveAttribute('data-support-id', id);
+  await page.getByLabel('Surface and paw overlays').uncheck();
+  await page.getByText('Cat motion lab · development', { exact: true }).click();
+  const contacts = () =>
+    page.evaluate(async () => {
+      const { Vector3 } = await import('/node_modules/.vite/deps/three.js');
+      const d = document.querySelector('.pet3d-layer').__petDebug,
+        s = d.model.skins[1],
+        v = new Vector3();
+      const low = [Infinity, Infinity, Infinity],
+        weights = s.geometry.attributes.skinWeight,
+        indices = s.geometry.attributes.skinIndex;
+      for (let i = 0; i < weights.count; i++) {
+        let dominant = '',
+          largest = -1;
+        const front = [0, 0];
+        for (let k = 0; k < 4; k++) {
+          const w = weights.getComponent(i, k),
+            name = s.skeleton.bones[indices.getComponent(i, k)].name;
+          if (w > largest) {
+            largest = w;
+            dominant = name;
+          }
+          if (/hand|f_digit/.test(name)) front[name.includes('L_') ? 0 : 1] += w;
+        }
+        v.fromBufferAttribute(s.geometry.attributes.position, i);
+        s.applyBoneTransform(i, v).applyMatrix4(s.matrixWorld);
+        front.forEach((w, f) => {
+          if (w > 0.6) low[f] = Math.min(low[f], v.y);
+        });
+        if (dominant.startsWith('thigh')) low[2] = Math.min(low[2], v.y);
+      }
+      return low.map((y) => (y - d.input.support.top) * 40);
+    });
+  // Wait for the pose blend itself, rather than assuming software WebGL has
+  // rendered its full 0.5 seconds within a fixed wall-clock delay.
+  await expect
+    .poll(async () => Math.max(...(await contacts()).map(Math.abs)), { timeout: 8000 })
+    .toBeLessThan(0.75);
+  await page.screenshot({ path: '/tmp/still-seated-button-fixed.png' });
+  await page.evaluate(() => {
+    const d = document.querySelector('.pet3d-layer').__petDebug;
+    d.input.debugPose = 'lie-down';
+    d.input.debugTime = 0;
+  });
+  await page.waitForTimeout(700);
+  await expect(layer(page)).toHaveAttribute('data-animation-clip', 'Still_Lie_Down_From_Sit');
+  for (const time of [0.45, 0.8, 1.25, 1.8]) {
+    await page.evaluate(
+      (time) => (document.querySelector('.pet3d-layer').__petDebug.input.debugTime = time),
+      time,
+    );
+    await page.waitForTimeout(350);
+  }
+  const error = await page.evaluate(async () => {
+    const { Box3 } = await import('/node_modules/.vite/deps/three.js');
+    const d = document.querySelector('.pet3d-layer').__petDebug,
+      box = new Box3();
+    d.model.skins.forEach((s) => box.union(new Box3().setFromObject(s, true)));
+    return (box.min.y - d.input.support.top) * 40;
+  });
+  expect(Math.abs(error)).toBeLessThan(0.75);
+  await page.screenshot({ path: '/tmp/still-loaf-button-fixed.png' });
+});
+
 test('animated companion text never rescans the workspace DOM', async ({ page }) => {
   const scans = await page.evaluate(async () => {
     const original = document.createTreeWalker.bind(document),

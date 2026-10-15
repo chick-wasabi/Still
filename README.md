@@ -37,7 +37,7 @@ Still brings your journal, tasks, and habits into one quiet corner of the intern
 
 ## 🐾 Meet your least productive teammate
 
-The cat is a textured tabby on an adapted 108-joint rig, with 12 supplied animation clips, 13 custom comfort clips, Rapier physics, and a stochastic behavior engine. Now 45 pixels tall, with soft tabby fur and a flowing tail, it walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels. It lives in the page itself: scroll away and it leaves the screen with the content, then comes back where you left it (unless it has been busy being a cat).
+The cat is a textured tabby on an adapted 108-joint rig, with 12 supplied animation clips, 14 custom comfort clips, Rapier physics, and a stochastic behavior engine. Now 45 pixels tall, with soft tabby fur and a flowing tail, it walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels. It lives in the page itself: scroll away and it leaves the screen with the content, then comes back where you left it (unless it has been busy being a cat).
 
 - **Drag and release the cat** to toss it. Fast wall impacts can produce a brief cling before gravity files its objection.
 - **Enable Play Ball in the top-right controls** (it starts off), then throw the toy ball and let the cat decide whether this meeting could have been a chase. Play sessions end, so the rest of your dashboard still gets a visit.

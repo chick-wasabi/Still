@@ -8,13 +8,16 @@ import { createLegIK } from '../src/lib/pet3d/legIK.js';
 
 const [source, output] = process.argv.slice(2);
 if (!source || !output) throw new Error('Expected source.glb output.glb');
+const restOnly = process.argv.includes('--rest-poses-only');
+const restNames = new Set(['Still_Sit', 'Still_Lie_Down', 'Still_Lie_Down_From_Sit', 'Still_Loaf']);
+const replaces = (name) => (restOnly ? restNames.has(name) : name.startsWith('Still_'));
 const bytes = await readFile(source),
   jsonLength = bytes.readUInt32LE(12);
 const json = JSON.parse(bytes.subarray(20, 20 + jsonLength));
 let binary = bytes.subarray(28 + jsonLength, 28 + jsonLength + json.buffers[0].byteLength);
 // Re-running against the shipped derivative replaces our clips rather than
 // accumulating inaccessible accessors and binary data on each generation.
-json.animations = json.animations.filter((a) => !a.name.startsWith('Still_'));
+json.animations = json.animations.filter((a) => !replaces(a.name));
 const used = new Set();
 for (const m of json.meshes)
   for (const p of m.primitives) {
@@ -179,6 +182,7 @@ const legs = [
 const tail = bones.filter((b) => b.name.startsWith('tail_'));
 reset();
 const standingFeet = legs.map((l) => l.foot.getWorldPosition(new T.Vector3()));
+const standingRotations = legs.map((l) => l.foot.getWorldQuaternion(new T.Quaternion()));
 function foot(i, x, y, z, flat = true) {
   legs[i].solve(point.set(x, y, z), 1);
   if (flat) {
@@ -223,8 +227,84 @@ function sit(t) {
   foot(3, -0.28, 0.3, 0.12);
   turn(head, 0, 0, 1, -0.15 + 0.03 * Math.sin(t * 0.7));
 }
+// The existing groom/scratch/sleep recipes intentionally retain their poses.
+// These rest-specific recipes author only sit, the lowering sequence, and loaf.
+const restSolvers = legs.map((leg, i) =>
+  createLegIK(leg.upper, leg.knee, leg.foot, new T.Vector3(i < 2 ? 0 : 1, i < 2 ? -1 : -0.1, 0)),
+);
+function restFoot(i, x, y, z, fold = 0, weight = 1) {
+  restSolvers[i](point.set(x, y, z), weight);
+  legs[i].foot.parent.getWorldQuaternion(parentQ);
+  legs[i].foot.quaternion.slerp(parentQ.invert().multiply(standingRotations[i]), weight);
+  legs[i].foot.updateWorldMatrix(false, true);
+  turn(legs[i].foot, 0, 0, 1, fold);
+}
+function groundedSit(t) {
+  root.position.y -= 0.47 / scale;
+  scene.updateMatrixWorld(true);
+  turn(root, 0, 0, 1, 0.88);
+  turn(find('spine_02'), 0, 0, 1, -0.23);
+  turn(chest, 0, 0, 1, -0.21);
+  turn(find('neck_01'), 0, 0, 1, -0.14);
+  turn(head, 0, 0, 1, -0.3 + 0.012 * Math.sin((t * Math.PI * 2) / 5));
+  turn(tail[0], 0, 0, 1, -1);
+  restFoot(0, 0.31, 0.105, -0.095);
+  restFoot(1, 0.31, 0.105, 0.095);
+  restFoot(2, -0.38, 0.15, -0.13, 1.05);
+  restFoot(3, -0.38, 0.15, 0.13, 1.05);
+}
+const ease = (t, a, b) => {
+  const u = T.MathUtils.clamp((t - a) / (b - a), 0, 1);
+  return u * u * u * (10 + u * (-15 + 6 * u));
+};
+function loafSequence(t, fromSit = false) {
+  const front = ease(t, 0.06, 0.68),
+    tuck = ease(t, 0.5, 1.08),
+    rear = ease(t, 0.9, 1.48),
+    settle = ease(t, 1.42, 1.8);
+  const seated = fromSit ? 1 - rear : 0;
+  root.position.y -=
+    (fromSit ? 0.47 - 0.11 * rear + 0.015 * settle : 0.04 * front + 0.32 * rear + 0.015 * settle) /
+    scale;
+  scene.updateMatrixWorld(true);
+  turn(root, 0, 0, 1, 0.88 * seated);
+  turn(
+    find('spine_02'),
+    0,
+    0,
+    1,
+    -0.34 * front + 0.48 * rear + 0.02 * settle - (0.23 * (1 - front) + 0.4 * front) * seated,
+  );
+  turn(chest, 0, 0, 1, -0.14 * front + 0.12 * rear - 0.21 * (1 - front) * seated);
+  turn(find('neck_01'), 0, 0, 1, 0.15 * front - 0.12 * rear - 0.14 * (1 - front) * seated);
+  turn(head, 0, 0, 1, -0.04 * settle - 0.3 * (1 - front) * seated);
+  turn(tail[0], 0, 0, 1, -seated);
+  for (let i = 0; i < 4; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const p = fromSit
+      ? new T.Vector3(i < 2 ? 0.31 : -0.38, i < 2 ? 0.105 : 0.15, side * (i < 2 ? 0.095 : 0.13))
+      : standingFeet[i].clone();
+    if (i < 2) {
+      p.x = T.MathUtils.lerp(p.x, 0.25, tuck);
+      p.y = T.MathUtils.lerp(p.y, 0.17, tuck);
+      p.z = T.MathUtils.lerp(p.z, side * 0.065, tuck);
+    } else {
+      p.x = T.MathUtils.lerp(p.x, -0.4, rear);
+      p.y = T.MathUtils.lerp(p.y, 0.13, rear);
+      p.z = T.MathUtils.lerp(p.z, side * 0.12, rear);
+    }
+    restFoot(
+      i,
+      p.x,
+      p.y,
+      p.z,
+      i < 2 ? -1.9 * tuck : (fromSit ? 1.05 * (1 - rear) : 0) + 1.1 * rear,
+      fromSit ? 1 : i < 2 ? front : rear,
+    );
+  }
+}
 const recipes = {
-  Still_Sit: [5, (t) => sit(t)],
+  Still_Sit: [5, (t) => groundedSit(t)],
   Still_Groom: [
     4,
     (t) => {
@@ -235,13 +315,8 @@ const recipes = {
       turn(find('jaw_'), 0, 0, 1, Math.max(0, Math.sin(t * 9)) * 0.06);
     },
   ],
-  Still_Lie_Down: [
-    2.4,
-    (t) => {
-      const a = T.MathUtils.smoothstep(t, 0.1, 2.3);
-      lying(t, a);
-    },
-  ],
+  Still_Lie_Down: [1.8, (t) => loafSequence(t)],
+  Still_Lie_Down_From_Sit: [1.8, (t) => loafSequence(t, true)],
   Still_Get_Up: [
     2.4,
     (t) => {
@@ -249,7 +324,7 @@ const recipes = {
       lying(t, a);
     },
   ],
-  Still_Loaf: [6, (t) => lying(t)],
+  Still_Loaf: [6, () => loafSequence(1.8)],
   Still_Sploot: [6, (t) => lying(t, 1, true)],
   Still_Knead: [
     3,
@@ -342,6 +417,7 @@ const recipes = {
 };
 const clips = [];
 for (const [name, [duration, recipe]] of Object.entries(recipes)) {
+  if (restOnly && !restNames.has(name)) continue;
   const n = Math.ceil(duration * 24),
     times = Array.from({ length: n + 1 }, (_, i) => (i / n) * duration);
   const values = bones.map(() => ({ q: [], p: [] }));
@@ -362,7 +438,19 @@ for (const [name, [duration, recipe]] of Object.entries(recipes)) {
       const data = values[i][key],
         varying = data.some((v, k) => Math.abs(v - data[k % size]) > 1e-6);
       tracks.push(
-        new Track(`${b.name}.${prop}`, varying ? times : [0], varying ? data : data.slice(0, size)),
+        new Track(
+          `${b.name}.${prop}`,
+          varying
+            ? times
+            : name === 'Still_Loaf' && b === root && prop === 'position'
+              ? [0, duration]
+              : [0],
+          varying
+            ? data
+            : name === 'Still_Loaf' && b === root && prop === 'position'
+              ? [...data.slice(0, size), ...data.slice(0, size)]
+              : data.slice(0, size),
+        ),
       );
     }
   });
@@ -370,7 +458,7 @@ for (const [name, [duration, recipe]] of Object.entries(recipes)) {
 }
 // Bake stride profiles from the body and contact seeds from every skin. Separate
 // eye/cornea shells can become the lowest point during a side-rest crossfade.
-const allClips = [...gltf.animations.filter((c) => !c.name.startsWith('Still_')), ...clips];
+const allClips = [...gltf.animations.filter((c) => !replaces(c.name)), ...clips];
 const body = skins.reduce((a, b) =>
   a.geometry.attributes.position.count > b.geometry.attributes.position.count ? a : b,
 );
@@ -419,9 +507,12 @@ function vertex(index) {
   body.applyBoneTransform(index, point);
   return point.applyMatrix4(body.matrixWorld);
 }
-const profiles = {},
-  supportIndices = new Set(),
-  skinSupport = skins.map((skin) => (skin === body ? supportIndices : new Set()));
+const previousMotion = json.asset.extras.stillMotion;
+const profiles = restOnly ? { ...previousMotion.profiles } : {},
+  supportIndices = new Set(restOnly ? previousMotion.supportVertices : []),
+  skinSupport = skins.map((skin, i) =>
+    skin === body ? supportIndices : new Set(restOnly ? previousMotion.skinSupport[i] : []),
+  );
 const auxiliarySkins = skins.flatMap((skin, index) => {
   if (skin === body) return [];
   const groups = new Uint16Array(skin.geometry.attributes.position.count),
@@ -437,7 +528,7 @@ const auxiliarySkins = skins.flatMap((skin, index) => {
   }
   return [{ skin, seeds: skinSupport[index], groups }];
 });
-for (const clip of allClips) {
+for (const clip of restOnly ? clips : allClips) {
   mixer.stopAllAction();
   const action = mixer.clipAction(clip).reset().play();
   const samples = [],
@@ -524,7 +615,7 @@ function accessor(values, size) {
   });
   return id;
 }
-json.animations = json.animations.filter((a) => !a.name.startsWith('Still_'));
+json.animations = json.animations.filter((a) => !replaces(a.name));
 for (const clip of clips) {
   const samplers = [],
     channels = [];

@@ -229,6 +229,7 @@ export function createCatModel(gltf) {
   let active = null,
     previousMode = '',
     clipName = '',
+    seatedLoafEntry = false,
     disposed = false;
   function update(
     mode,
@@ -242,8 +243,15 @@ export function createCatModel(gltf) {
     motion = {},
   ) {
     if (disposed) return;
-    const nextName = animationForMode(mode, speed),
-      action = actions.get(nextName) || actions.get('Cat_Idle');
+    let nextName = animationForMode(mode, speed);
+    // Rest-entry variants are animation choices only; the director's states,
+    // durations, probabilities and physics remain untouched.
+    if (mode === 'lie-down') {
+      if (previousMode !== mode) seatedLoafEntry = active?.getClip().name === 'Still_Sit';
+      if (seatedLoafEntry && actions.has('Still_Lie_Down_From_Sit'))
+        nextName = 'Still_Lie_Down_From_Sit';
+    }
+    const action = actions.get(nextName) || actions.get('Cat_Idle');
     const elapsed = Math.min(0.05, Math.max(0, dt)),
       t = reduced ? 0 : time;
     if (!reduced) {
@@ -267,7 +275,7 @@ export function createCatModel(gltf) {
         // contributing residual weights and producing tangled poses.
         for (const other of actions.values())
           if (other !== active && other !== action) other.stop();
-        active.crossFadeTo(action, 0.32, false);
+        active.crossFadeTo(action, mode === 'sit' ? 0.5 : mode === 'lie-down' ? 0.18 : 0.32, false);
       }
       active = action;
       clipName = nextName;

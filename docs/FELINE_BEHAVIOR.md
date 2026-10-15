@@ -1,7 +1,7 @@
 # Still’s grounded companion
 
 The tabby remains 45 CSS pixels tall when standing on its 108-joint rig. The
-bundled GLB now contains the twelve original supplied clips and thirteen Still
+bundled GLB now contains the twelve original supplied clips and fourteen Still
 comfort clips. Geometry, atlas, source hashes and separate license credits remain
 in the asset and in Settings. Nothing is fetched from Sketchfab at runtime.
 
@@ -46,6 +46,28 @@ node scripts/author-cat-motion.mjs public/models/still-tabby.v1.glb /tmp/still-t
 The authoring script removes previous Still clips and compacts their unused
 accessors/buffers, so repeated generation does not accumulate dead binary data.
 The original mesh/rig fitting pipeline remains in `scripts/build-tabby-asset.py`.
+
+### Sitting and loaf calibration
+
+The seated clip lowers the pelvis, compresses the hind stifles/hocks and plants the
+front soles at the rump's contact plane. Its tail counter-pose prevents the rotated
+pelvis from driving the tail under the floor and lifting the entire mesh.
+
+Loafing has standing and seated entry clips. Both use a 1.8-second sequence: front
+lowering, symmetric wrist/paw tuck, rear compression, then a small spine settle.
+The seated entry starts at the sitting keyframes; both entries end at the exact
+loaf keyframes. The existing behavior clock is unchanged: any remaining lie-down
+state time holds the final pose. Only these rest-entry blends have changed.
+
+To replace just these rest keyframes and their measured contact profiles:
+
+```bash
+node scripts/author-cat-motion.mjs public/models/still-tabby.v1.glb /tmp/still-rest.glb --rest-poses-only
+```
+
+This preserves the other 22 clips and contact profiles byte-for-byte, along with
+the mesh, skeleton, materials and textures. A checked-in signature of those parts
+from commit `85a6528` protects that scope in the unit suite.
 
 ## A page that can be traversed
 

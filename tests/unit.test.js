@@ -229,7 +229,7 @@ test('3D behavior weights respect guards, fatigue, and recent decisions', async 
       sample(1).filter((x) => x === 'sleep').length * 3,
   );
 });
-test('the shipped tabby has a weighted 108-joint rig, 25 real clips, and a 45px silhouette', async () => {
+test('the shipped tabby has a weighted 108-joint rig, 26 real clips, and a 45px silhouette', async () => {
   const { loadCatAsset } = await import('./helpers/loadCatAsset.js');
   const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
   const { Box3, Vector3 } = await import('three');
@@ -241,7 +241,7 @@ test('the shipped tabby has a weighted 108-joint rig, 25 real clips, and a 45px 
   );
   assert.ok(gltf.asset.extras.sources.every((source) => /^[a-f0-9]{64}$/.test(source.sha256)));
   assert.equal(model.bones.length, 108);
-  assert.equal(model.animations.length, 25);
+  assert.equal(model.animations.length, 26);
   assert.ok(Math.abs(model.standingHeight * 40 - 45) < 0.01);
   assert.ok(
     Math.abs(new Box3().setFromObject(model.mesh, true).getSize(new Vector3()).y * 40 - 45) < 6,
@@ -741,6 +741,134 @@ test('a deliberate cat drop-through leaves ball and lower-platform collisions in
     queue.free();
   } finally {
     world.free();
+  }
+});
+
+test('rest-pose editing preserves the mesh, rig, textures and all 22 other clips and profiles', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { catAssetSignature } = await import('./helpers/catAssetSignature.js');
+  const baseline = JSON.parse(
+    await readFile(new URL('./fixtures/cat-rest-baseline.json', import.meta.url)),
+  );
+  const current = await catAssetSignature(
+    new URL('../public/models/still-tabby.v1.glb', import.meta.url),
+  );
+  assert.equal(current.staticAsset, baseline.staticAsset);
+  for (const [name, hash] of Object.entries(baseline.animations)) {
+    assert.equal(current.animations[name], hash, `${name} keyframes changed`);
+    assert.equal(current.profiles[name], baseline.profiles[name], `${name} contacts changed`);
+  }
+});
+
+test('both 1.8-second loaf entries meet the exact final loaf keyframes', async () => {
+  const { loadCatAsset } = await import('./helpers/loadCatAsset.js');
+  const gltf = await loadCatAsset();
+  const loaf = gltf.animations.find((c) => c.name === 'Still_Loaf');
+  const sit = gltf.animations.find((c) => c.name === 'Still_Sit');
+  assert.equal(loaf.duration, 6, 'a static loaf still has a valid loop duration');
+  for (const name of ['Still_Lie_Down', 'Still_Lie_Down_From_Sit']) {
+    const clip = gltf.animations.find((c) => c.name === name);
+    assert.ok(Math.abs(clip.duration - 1.8) < 1e-6);
+    for (const track of clip.tracks) {
+      const size = track.getValueSize(),
+        target = loaf.tracks.find((t) => t.name === track.name);
+      for (let i = 0; i < size; i++) {
+        assert.ok(
+          Math.abs(track.values[track.values.length - size + i] - target.values[i]) < 1e-6,
+          `${name} → loaf seam at ${track.name}`,
+        );
+        if (name.endsWith('From_Sit')) {
+          const seated = sit.tracks.find((t) => t.name === track.name);
+          assert.ok(
+            Math.abs(track.values[i] - seated.values[i]) < 1e-6,
+            `sit → lowering seam at ${track.name}`,
+          );
+        }
+      }
+    }
+  }
+});
+
+test('sitting plants front soles and rump, then folds into loaf without a standing bounce or joint snap', async () => {
+  const { loadCatAsset } = await import('./helpers/loadCatAsset.js');
+  const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
+  const { Vector3 } = await import('three');
+  const model = createCatModel(await loadCatAsset());
+  model.mesh.position.y = 0.435;
+  const motion = { grounded: true, support: { top: 0 }, travel: 0 };
+  const skin = model.skins[1],
+    groups = [[], [], []],
+    p = new Vector3();
+  const weights = skin.geometry.attributes.skinWeight,
+    indices = skin.geometry.attributes.skinIndex;
+  for (let i = 0; i < weights.count; i++) {
+    let dominant = '',
+      largest = -1;
+    const front = [0, 0];
+    for (let k = 0; k < 4; k++) {
+      const w = weights.getComponent(i, k),
+        name = skin.skeleton.bones[indices.getComponent(i, k)].name;
+      if (w > largest) {
+        largest = w;
+        dominant = name;
+      }
+      if (/hand|f_digit/.test(name)) front[name.includes('L_') ? 0 : 1] += w;
+    }
+    front.forEach((w, f) => {
+      if (w > 0.6) groups[f].push(i);
+    });
+    if (dominant.startsWith('thigh')) groups[2].push(i);
+  }
+  const low = (list) => {
+    let result = Infinity;
+    for (const i of list) {
+      p.fromBufferAttribute(skin.geometry.attributes.position, i);
+      skin.applyBoneTransform(i, p).applyMatrix4(skin.matrixWorld);
+      result = Math.min(result, p.y);
+    }
+    return result * 40;
+  };
+  try {
+    for (let i = 0; i < 180; i++)
+      model.update('sit', i / 60, 1 / 60, 0, 0, false, 1, false, motion);
+    groups.forEach((g, i) => assert.ok(Math.abs(low(g)) < 0.7, `seated contact ${i}: ${low(g)}px`));
+    const joints = model.bones.map(() => new Vector3()),
+      last = joints.map(() => new Vector3());
+    model.bones.forEach((b, i) => b.getWorldPosition(last[i]));
+    const seatedHip = model.byName.root.getWorldPosition(new Vector3()).y;
+    const seatedShoulder = model.byName.frontNear.getWorldPosition(new Vector3()).y;
+    let step = 0,
+      earlyHipRise = 0;
+    for (let frame = 0; frame < 144; frame++) {
+      model.update('lie-down', frame / 60, 1 / 60, 0, 0, false, 1, false, motion);
+      assert.equal(model.activeClip, 'Still_Lie_Down_From_Sit');
+      model.bones.forEach((b, i) => {
+        b.getWorldPosition(joints[i]);
+        step = Math.max(step, joints[i].distanceTo(last[i]) * 40);
+        last[i].copy(joints[i]);
+      });
+      if (frame < 50)
+        earlyHipRise = Math.max(earlyHipRise, model.byName.root.getWorldPosition(p).y - seatedHip);
+      if (frame === 36)
+        assert.ok(
+          seatedShoulder - model.byName.frontNear.getWorldPosition(p).y > 0.1,
+          'shoulders lower first while the rump remains seated',
+        );
+    }
+    assert.ok(step < 3, `largest joint step ${step}px`);
+    assert.ok(earlyHipRise * 40 < 1, `seated entry stood up by ${earlyHipRise * 40}px`);
+    for (let i = 0; i < 60; i++)
+      model.update('loaf', i / 60, 1 / 60, 0, 0, false, 1, false, motion);
+    const wrist = model.byName.frontNearPaw.getWorldPosition(new Vector3()),
+      shoulder = model.byName.frontNear.getWorldPosition(new Vector3()),
+      chest = model.byName.chest.getWorldPosition(new Vector3());
+    assert.ok(
+      wrist.x < shoulder.x - 0.2 && wrist.y < chest.y - 0.15,
+      'wrists fold inside the chest footprint',
+    );
+    assert.ok(Math.abs(wrist.z) < 0.09, 'symmetric paws fold inward');
+  } finally {
+    model.dispose();
   }
 });
 
