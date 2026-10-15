@@ -32,7 +32,8 @@ import { dateKey } from './data';
 function Workspace({ workspace }) {
   const { data, update, locked, unlock, lock, protectedByPin, setPin, error, status } = workspace;
   const [view, setView] = useState('Journal');
-  const { catEnabled, ballEnabled, toggleCat, toggleBall } = useMotionPreferences();
+  const { catEnabled, ballEnabled, soundEnabled, toggleCat, toggleBall, toggleSound } =
+    useMotionPreferences();
   useLayoutEffect(() => {
     document.documentElement.dataset.workspaceTheme =
       workspace.activeSpaceId === 'work' ? 'work' : 'personal';
@@ -309,6 +310,7 @@ function Workspace({ workspace }) {
           <PetCompanion
             enabled={catEnabled}
             ballEnabled={ballEnabled}
+            soundEnabled={soundEnabled}
             suspended={Boolean(editor || settings || search)}
             layoutKey={`${workspace.activeSpaceId}-${view}`}
           />
@@ -342,6 +344,8 @@ function Workspace({ workspace }) {
         )}
         {settings && (
           <Settings
+            soundEnabled={soundEnabled}
+            toggleSound={toggleSound}
             profile={profile}
             onProfile={(next) => update('profile', next)}
             {...{ protectedByPin, setPin }}

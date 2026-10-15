@@ -4,6 +4,8 @@ import Modal from './Modal';
 import EmojiPicker from './EmojiPicker';
 export default function Settings({
   profile,
+  soundEnabled = false,
+  toggleSound,
   onProfile,
   protectedByPin,
   setPin,
@@ -336,6 +338,14 @@ export default function Settings({
             )}
           </section>
         )}
+        <section className="settings-section companion-sounds">
+          <h3>Companion sounds</h3>
+          <p>Soft purring and sleepy breathing. Quiet by default.</p>
+          <label>
+            <input type="checkbox" checked={soundEnabled} onChange={toggleSound} /> Enable companion
+            sounds
+          </label>
+        </section>
         <section className="settings-section">
           <details className="companion-credits">
             <summary>About &amp; credits</summary>

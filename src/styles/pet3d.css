@@ -96,32 +96,33 @@ html[data-pet-cursor='true'] .pet3d-host * {
   }
 }
 
-/* The text is never changed; the decorative scratch heals after one animation. */
-[data-pet-scratched] {
-  animation: pet-scratch-heal 650ms steps(3, end) both;
+/* Three irregular contact grooves; no strikethrough, layout shift or text mutation. */
+.pet3d-claw-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32px;
+  height: 36px;
+  pointer-events: none;
+  overflow: visible;
+  will-change: opacity;
+  animation: pet-claw-life var(--scratch-life) linear both;
 }
-@keyframes pet-scratch-heal {
-  0%,
+@keyframes pet-claw-life {
+  0% {
+    opacity: 0;
+  }
+  3%,
+  82% {
+    opacity: 1;
+  }
   100% {
-    transform: translate3d(0, 0, 0);
-    text-shadow: none;
-  }
-  20%,
-  55% {
-    transform: translate3d(-0.7px, 0.4px, 0);
-    text-shadow:
-      1px 0 #e5c78577,
-      -1px 0 #7cd6b466;
-  }
-  35%,
-  70% {
-    transform: translate3d(0.7px, -0.3px, 0);
-    text-shadow: -1px 0 #e5c78555;
+    opacity: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-pet-scratched] {
-    animation: none;
+  .pet3d-claw-mark {
+    display: none;
   }
 }
 
@@ -148,13 +149,6 @@ html[data-pet-cursor='true'] .pet3d-host * {
   color: transparent;
   text-shadow: none;
 }
-::highlight(still-cat-scratch) {
-  text-decoration: line-through;
-  text-decoration-color: #dfbf8c;
-  text-decoration-thickness: 2px;
-  color: #d8c6a4;
-}
-
 .companion-credits summary {
   cursor: pointer;
   font-weight: 600;
@@ -167,4 +161,44 @@ html[data-pet-cursor='true'] .pet3d-host * {
   color: var(--accent, #a7cdb3);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+.pet3d-debug-map {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.pet3d-inspector {
+  position: absolute;
+  top: 140px;
+  right: 16px;
+  width: 245px;
+  padding: 12px;
+  color: #d4e6dd;
+  background: #10211bf5;
+  border: 1px solid #82b89955;
+  border-radius: 12px;
+  pointer-events: auto;
+  font: 12px/1.6 monospace;
+}
+.pet3d-inspector label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.pet3d-inspector select {
+  max-width: 160px;
+  color: #e3eddd;
+  background: #243a32;
+}
+.pet3d-inspector pre {
+  max-height: 120px;
+  overflow: auto;
+}
+.companion-sounds input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: #9cbf9a;
 }

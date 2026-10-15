@@ -28,7 +28,7 @@ export function observeDomWorld(host, onChange) {
       elementsById = new Map();
     const elements = [
       ...host.querySelectorAll(
-        '.sidebar,[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1,.habit-matrix tr,.calendar-day,.sidebar .nav-item,.sidebar .brand,.sidebar .profile-button',
+        '.sidebar,[data-cat-surface],.entry-card,.habit-panel,.task-composer,.sticky-task,.notepad-section-heading,.page-intro h1,.task-page-header h1,.habit-matrix tr,.calendar-day,.sidebar nav button,.sidebar .brand,.sidebar .profile-button',
       ),
     ];
     for (const element of elements) {
@@ -64,9 +64,8 @@ export function observeDomWorld(host, onChange) {
       const left = Math.max(0, rect.left - origin.left),
         right = Math.min(view.width, rect.right - origin.left);
       const sidebar = element.closest('.sidebar');
-      const sidebarRect = sidebar?.getBoundingClientRect();
-      const top = sidebar ? rect.top - sidebarRect.top : rect.top - origin.top,
-        bottom = sidebar ? rect.bottom - sidebarRect.top : rect.bottom - origin.top;
+      const top = rect.top - origin.top,
+        bottom = rect.bottom - origin.top;
       if (right <= left || bottom < 0 || top > view.height) continue;
       if (!ids.has(element)) ids.set(element, `ui-${nextId++}`);
       const a = screenToWorld(left, top, view),
@@ -75,19 +74,15 @@ export function observeDomWorld(host, onChange) {
         element.dataset.catSurface ||
         (element.matches('.entry-card') ? 'journal' : heading ? 'header' : 'panel');
       const hollow = bordered || element.matches('.calendar-panel,.habit-panel,.entry-card');
-      const thin =
-        kind === 'header' ||
-        kind === 'collection' ||
-        element.matches(
-          '.notepad-section-heading,.calendar-day,.habit-matrix tr,.nav-item,.brand,.profile-button',
-        );
       const box = {
         id: ids.get(element),
         kind,
         left: a.x,
         right: b.x,
         top: a.y,
-        bottom: thin || hollow ? a.y - 0.045 : b.y,
+        bottom: a.y - 0.025,
+        oneWay: true,
+        sticky: Boolean(sidebar),
       };
       if (box.right - box.left < 0.1) continue;
       const edgeVisible = (side) =>
@@ -95,10 +90,11 @@ export function observeDomWorld(host, onChange) {
         (parseFloat(style['border' + side + 'Width']) > 0 &&
           opaque(style['border' + side + 'Color']));
       if (edgeVisible('Top')) boxes.push(box);
-      if (hollow) {
+      if (hollow && !element.matches('.calendar-day,.habit-matrix tr,button')) {
         if (edgeVisible('Left'))
           boxes.push({
-            sensor: element.matches('.sidebar'),
+            sensor: true,
+            sticky: Boolean(sidebar),
             id: box.id + '-left',
             kind: 'wall',
             left: a.x,
@@ -108,21 +104,13 @@ export function observeDomWorld(host, onChange) {
           });
         if (edgeVisible('Right'))
           boxes.push({
-            sensor: element.matches('.sidebar'),
+            sensor: true,
+            sticky: Boolean(sidebar),
             id: box.id + '-right',
             kind: 'wall',
             left: b.x - 0.035,
             right: b.x,
             top: a.y,
-            bottom: b.y,
-          });
-        if (edgeVisible('Bottom'))
-          boxes.push({
-            id: box.id + '-bottom',
-            kind: 'panel',
-            left: a.x,
-            right: b.x,
-            top: b.y + 0.035,
             bottom: b.y,
           });
       }
@@ -163,8 +151,11 @@ export function observeDomWorld(host, onChange) {
           right: b.x,
           top: a.y,
           bottom: b.y,
+          oneWay: true,
+          sticky: Boolean(target.element.closest('.sidebar')),
         };
-        boxes.push(ledge);
+        // Short glyphs remain interaction targets, not tiny invisible obstacles.
+        if (ledge.right - ledge.left > CAT.halfWidth * 2 + 0.08) boxes.push(ledge);
         if (ledge.right - ledge.left > CAT.halfWidth * 2 + 0.08) {
           surfaces.push(ledge);
           if (!target.surface) target.surface = ledge;
@@ -179,7 +170,36 @@ export function observeDomWorld(host, onChange) {
       top: 0,
       bottom: -view.height / view.unit,
     };
-    // Round subpixel DOM noise; a scroll offset cancels out of every measured rectangle.
+    surfaces.push({
+      id: 'floor',
+      kind: 'floor',
+      left: bounds.left,
+      right: bounds.right,
+      top: bounds.bottom + 0.08,
+      bottom: bounds.bottom,
+    });
+    boxes.push(
+      {
+        id: 'left',
+        kind: 'wall',
+        sensor: true,
+        left: bounds.left - 0.035,
+        right: bounds.left,
+        top: 0,
+        bottom: bounds.bottom,
+      },
+      {
+        id: 'right',
+        kind: 'wall',
+        sensor: true,
+        left: bounds.right,
+        right: bounds.right + 0.035,
+        top: 0,
+        bottom: bounds.bottom,
+      },
+    );
+    // Round subpixel DOM noise. Ordinary document surfaces remain stable on
+    // scroll; sticky surfaces intentionally move within the shared origin.
     const key = JSON.stringify(
       [
         view,
@@ -208,7 +228,12 @@ export function observeDomWorld(host, onChange) {
     if (!disposed && !frame) frame = requestAnimationFrame(measure);
   }
   function mutation(records) {
-    if (records.some((r) => !r.target.closest?.('.pet3d-layer'))) {
+    if (
+      records.some(
+        (r) =>
+          !(r.target.nodeType === 1 ? r.target : r.target.parentElement)?.closest('.pet3d-layer'),
+      )
+    ) {
       refresh();
       clearTimeout(settle);
       settle = setTimeout(refresh, 240);
@@ -223,9 +248,9 @@ export function observeDomWorld(host, onChange) {
     attributeFilter: ['inert', 'open', 'aria-expanded'],
   });
   window.addEventListener('resize', refresh, { passive: true });
-  // A nested scrolling card changes its own surfaces; document scroll does not.
+  // Refresh nested scrollers and sticky sidebar geometry on document scroll.
   const nestedScroll = (event) => {
-    if (event.target !== document && host.contains(event.target)) refresh();
+    if (event.target === document || host.contains(event.target)) refresh();
   };
   document.addEventListener('scroll', nestedScroll, { passive: true, capture: true });
   refresh();

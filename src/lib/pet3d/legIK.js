@@ -2,7 +2,7 @@ import { Quaternion, Vector3, MathUtils } from 'three';
 
 // Analytic two-bone IK. Preserve the animated knee's bend plane, clamp reach,
 // and apply world-space corrections in each joint's parent coordinate system.
-export function createLegIK(upper, knee, foot) {
+export function createLegIK(upper, knee, foot, poleHint = null) {
   const a = new Vector3(),
     b = new Vector3(),
     c = new Vector3(),
@@ -37,7 +37,9 @@ export function createLegIK(upper, knee, foot) {
       (first + second) * 0.998,
     );
     direction.normalize();
-    pole.subVectors(b, a).addScaledVector(direction, -pole.dot(direction));
+    if (poleHint) pole.copy(poleHint);
+    else pole.subVectors(b, a);
+    pole.addScaledVector(direction, -pole.dot(direction));
     if (pole.lengthSq() < 1e-8) pole.set(0, 0, 1).addScaledVector(direction, -direction.z);
     pole.normalize();
     const along = (first * first + distance * distance - second * second) / (2 * distance);

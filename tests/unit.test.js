@@ -229,7 +229,7 @@ test('3D behavior weights respect guards, fatigue, and recent decisions', async 
       sample(1).filter((x) => x === 'sleep').length * 3,
   );
 });
-test('the shipped tabby has a weighted 108-joint rig, 12 real clips, and a 45px silhouette', async () => {
+test('the shipped tabby has a weighted 108-joint rig, 25 real clips, and a 45px silhouette', async () => {
   const { loadCatAsset } = await import('./helpers/loadCatAsset.js');
   const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
   const { Box3, Vector3 } = await import('three');
@@ -241,7 +241,7 @@ test('the shipped tabby has a weighted 108-joint rig, 12 real clips, and a 45px 
   );
   assert.ok(gltf.asset.extras.sources.every((source) => /^[a-f0-9]{64}$/.test(source.sha256)));
   assert.equal(model.bones.length, 108);
-  assert.equal(model.animations.length, 12);
+  assert.equal(model.animations.length, 25);
   assert.ok(Math.abs(model.standingHeight * 40 - 45) < 0.01);
   assert.ok(
     Math.abs(new Box3().setFromObject(model.mesh, true).getSize(new Vector3()).y * 40 - 45) < 6,
@@ -304,7 +304,7 @@ test('behavior modes select authored locomotion, climbing, grooming, and jump cl
   assert.equal(animationForMode('run', 5.7), 'Cat_Gallop_Run');
   assert.equal(animationForMode('stalk', 1), 'Cat_Stalk_Hunt');
   assert.equal(animationForMode('climb'), 'Cat_Climb_Tree');
-  assert.equal(animationForMode('groom'), 'Cat_Lick_Paw');
+  assert.equal(animationForMode('groom'), 'Still_Groom');
   assert.equal(animationForMode('jump'), 'Cat_Leap_Jump');
 });
 test('Rapier applies gravity, lands a CCD rigid body, and rebounds the physics ball', async () => {
@@ -480,22 +480,18 @@ test('climbing grips an actual panel sidewall and lands on its top under gravity
   }
 });
 
-test('scratching decorates text briefly and heals without modifying its content', async () => {
+test('unreachable text is never scratched remotely or changed by the physics AI', async () => {
   const f = await petPhysicsFixture(),
-    originalRandom = Math.random;
+    original = Math.random;
   try {
     f.input.ballEnabled = false;
     f.ai.syncActors();
     Math.random = () => 0.999;
-    f.ball.setTranslation({ x: 30, y: -25, z: 0 }, true);
-    for (let i = 0; i < 360 && !f.attributes.has('data-pet-scratched'); i++) f.step();
-    assert.ok(f.attributes.has('data-pet-scratched'));
+    f.step(360);
     assert.equal(f.text.textContent, 'Your journal');
-    await new Promise((resolve) => setTimeout(resolve, 900));
     assert.equal(f.attributes.has('data-pet-scratched'), false);
-    assert.equal(f.text.textContent, 'Your journal');
   } finally {
-    Math.random = originalRandom;
+    Math.random = original;
     f.dispose();
   }
 });
@@ -525,13 +521,18 @@ test('dragging a CCD toy through the cat cannot impart a kinematic launch impuls
 test('motion preferences default the ball off and preserve each independent toggle', async () => {
   const { readMotionPreferences } = await import('../src/hooks/useMotionPreferences.js');
   const read = (value) => readMotionPreferences({ getItem: () => value });
-  assert.deepEqual(read(null), { catEnabled: true, ballEnabled: false });
+  assert.deepEqual(read(null), { catEnabled: true, ballEnabled: false, soundEnabled: false });
   assert.deepEqual(read('{"catEnabled":false,"ballEnabled":true}'), {
     catEnabled: false,
     ballEnabled: true,
+    soundEnabled: false,
   });
-  assert.deepEqual(read('{"catEnabled":true}'), { catEnabled: true, ballEnabled: false });
-  assert.deepEqual(read('corrupt'), { catEnabled: true, ballEnabled: false });
+  assert.deepEqual(read('{"catEnabled":true}'), {
+    catEnabled: true,
+    ballEnabled: false,
+    soundEnabled: false,
+  });
+  assert.deepEqual(read('corrupt'), { catEnabled: true, ballEnabled: false, soundEnabled: false });
 });
 
 test('refresh spawn selection varies both pose and safe physical location', async () => {
@@ -636,7 +637,8 @@ test('feline breathing, sleep and gaze stay alive while a stopped gait stays pla
 });
 
 test('cursor capture requires real mouth contact and releases within the guideâ€™s hold budget', async () => {
-  const f = await petPhysicsFixture();
+  const f = await petPhysicsFixture(),
+    originalRandom = Math.random;
   try {
     f.input.ballEnabled = false;
     f.ai.syncActors();
@@ -649,7 +651,9 @@ test('cursor capture requires real mouth contact and releases within the guideâ€
     f.input.pointer.inside = true;
     f.input.worldPointer = { x: p.x + 0.8, y: p.y + 0.4, z: 0 };
     f.input.idleDeadline = -1;
+    Math.random = () => 0;
     f.step(2);
+    Math.random = originalRandom;
     assert.equal(f.ai.mode, 'stalk-ready');
     assert.equal(f.ai.checkCursorContact({ x: p.x - 20, y: p.y }), false);
     assert.equal(f.input.held, false);
@@ -659,6 +663,7 @@ test('cursor capture requires real mouth contact and releases within the guideâ€
     f.step(610);
     assert.equal(f.input.held, false);
   } finally {
+    Math.random = originalRandom;
     f.dispose();
   }
 });
@@ -736,5 +741,189 @@ test('a deliberate cat drop-through leaves ball and lower-platform collisions in
     queue.free();
   } finally {
     world.free();
+  }
+});
+
+test('skin contact searches separate limb basins during blended poses', async () => {
+  const { createSupportSampler } = await import('../src/lib/pet3d/contactMesh.js');
+  const { BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute, Matrix4 } =
+    await import('three');
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new Float32BufferAttribute([0, 0, 0, 1, 1, 0, 2, 2, 0, 3, 0.1, 0, 4, -0.3, 0, 5, 0.5, 0], 3),
+  );
+  geometry.setAttribute(
+    'skinWeight',
+    new Float32BufferAttribute(Array.from({ length: 6 }, () => [1, 0, 0, 0]).flat(), 4),
+  );
+  geometry.setAttribute(
+    'skinIndex',
+    new Uint16BufferAttribute(
+      Array.from({ length: 6 }, (_, i) => [i < 3 ? 0 : 1, 0, 0, 0]).flat(),
+      4,
+    ),
+  );
+  geometry.setIndex([0, 1, 2, 3, 4, 5]);
+  const sample = createSupportSampler(
+    { geometry, matrixWorld: new Matrix4(), applyBoneTransform: (_, point) => point },
+    [0, 3],
+  );
+  // Seed 0 starts lower than seed 3, but the other limb contains the true contact.
+  assert.ok(Math.abs(sample() + 0.3) < 1e-6);
+  geometry.dispose();
+});
+
+test('comfort clips ground the actual skin, and calibrated walking has no IK paw snaps', async () => {
+  const { loadCatAsset } = await import('./helpers/loadCatAsset.js');
+  const { createCatModel } = await import('../src/lib/pet3d/catModel.js');
+  const { Box3, Vector3 } = await import('three');
+  const model = createCatModel(await loadCatAsset());
+  model.mesh.position.y = 0.435;
+  try {
+    for (const mode of ['groom', 'sit', 'loaf', 'sploot', 'knead', 'sleep', 'side-sleep', 'roll']) {
+      for (let i = 0; i < 150; i++)
+        model.update(mode, i / 60, 1 / 60, 0, 0, false, 1, false, {
+          grounded: true,
+          support: { top: 0 },
+          travel: 0,
+        });
+      const box = new Box3().setFromObject(model.mesh, true);
+      assert.ok(Math.abs(box.min.y * 40) < 2, `${mode} floor error ${box.min.y * 40}px`);
+      assert.equal(model.mesh.children[0].rotation.x, 0, 'no whole-model rolling shortcut');
+    }
+    for (const mode of ['groom', 'loaf'])
+      for (let i = 0; i < 45; i++) {
+        model.update(mode, i / 60, 1 / 60, 0, 0, false, 1, false, {
+          grounded: true,
+          support: { top: 0 },
+          travel: 0,
+        });
+        const error = new Box3().setFromObject(model.mesh, true).min.y * 40;
+        assert.ok(Math.abs(error) < 2, `${mode} transition contact ${error}px`);
+      }
+    // Eye/cornea geometry is a separate skin. Head/eye tracking during comfort
+    // crossfades must not push those shells through an otherwise grounded body.
+    for (const mode of ['sleep', 'roll', 'side-sleep'])
+      for (let i = 0; i < 90; i++) {
+        model.update(mode, i / 60, 1 / 60, 0, 0.9, false, 1, false, {
+          grounded: true,
+          support: { top: 0 },
+          lookY: -0.8,
+          travel: 0,
+        });
+        const error = new Box3().setFromObject(model.mesh, true).min.y * 40;
+        assert.ok(Math.abs(error) < 2, `${mode} whole-skin gaze contact ${error}px`);
+      }
+    const last = Array.from({ length: 4 }, () => new Vector3()),
+      paws = last.map(() => new Vector3());
+    let largest = 0;
+    for (let i = 0; i < 180; i++) {
+      model.mesh.position.x += 1.6 / 60;
+      model.update('walk', i / 60, 1 / 60, 1.6, 0, false, 1, false, {
+        grounded: true,
+        support: { top: 0 },
+        travel: 1.6 / 60,
+      });
+      model.pawPositions(paws);
+      paws.forEach((p, k) => {
+        if (i > 40) largest = Math.max(largest, p.distanceTo(last[k]) * 40);
+        last[k].copy(p);
+      });
+    }
+    assert.ok(largest < 8, `paw moved ${largest}px in a frame`);
+  } finally {
+    model.dispose();
+  }
+});
+
+test('surface routes can move away from their destination and climb multiple one-way levels', async () => {
+  const { findSurfaceRoute } = await import('../src/lib/pet3d/navigation.js');
+  const surfaces = [
+    { id: 'start', left: 3, right: 6, top: -13, bottom: -13.025, oneWay: true },
+    { id: 'left-step', left: 0.8, right: 3.5, top: -8, bottom: -8.025, oneWay: true },
+    { id: 'upper-step', left: 5, right: 9, top: -4, bottom: -4.025, oneWay: true },
+    { id: 'goal', left: 10, right: 14, top: -1.5, bottom: -1.525, oneWay: true },
+  ];
+  const route = findSurfaceRoute({ x: 4.5, y: -12.565 }, surfaces[3], {
+    surfaces,
+    boxes: surfaces,
+    bounds: { left: 0, right: 16, top: 2, bottom: -15, width: 16, height: 17 },
+  });
+  assert.ok(route?.length >= 3);
+  assert.equal(route.at(-1).surface.id, 'goal');
+  assert.ok(
+    route.some((e) => e.point.x < 4.5),
+    'temporarily travels away from goal',
+  );
+});
+
+test('thin one-way ledges accept falling CCD bodies and let an ascending kitten through', async () => {
+  const R = await import('@dimforge/rapier3d-compat');
+  await R.init();
+  const world = new R.World({ x: 0, y: -26, z: 0 }),
+    queue = new R.EventQueue(true);
+  try {
+    const roof = world.createRigidBody(R.RigidBodyDesc.fixed());
+    world.createCollider(R.ColliderDesc.cuboid(5, 0.0125, 1), roof);
+    const cat = world.createRigidBody(
+      R.RigidBodyDesc.dynamic()
+        .setTranslation(0, -1.5, 0)
+        .setLinvel(0, 11, 0)
+        .setCcdEnabled(true)
+        .lockRotations(),
+    );
+    world.createCollider(
+      R.ColliderDesc.cuboid(0.57, 0.42, 0.27).setActiveHooks(R.ActiveHooks.FILTER_CONTACT_PAIRS),
+      cat,
+    );
+    let bottom = -2,
+      vy = 11,
+      peak = -Infinity;
+    const hooks = {
+      filterContactPair() {
+        return vy > 0.15 || bottom < -0.075 ? 0 : R.SolverFlags.COMPUTE_IMPULSE;
+      },
+    };
+    for (let i = 0; i < 180; i++) {
+      bottom = cat.translation().y - 0.42;
+      vy = cat.linvel().y;
+      world.step(queue, hooks);
+      peak = Math.max(peak, cat.translation().y);
+    }
+    assert.ok(peak > 0.5);
+    assert.ok(Math.abs(cat.translation().y - 0.4325) < 0.05);
+  } finally {
+    queue.free();
+    world.free();
+  }
+});
+
+test('sleep intentions last 40â€“50 seconds and are protected from idle-cursor hunting', async () => {
+  const { behaviorDuration } = await import('../src/lib/pet3d/behaviorConfig.js');
+  assert.equal(
+    behaviorDuration('sleep', () => 0),
+    40,
+  );
+  assert.equal(
+    behaviorDuration('sleep', () => 1),
+    50,
+  );
+  const f = await petPhysicsFixture();
+  try {
+    f.input.ballEnabled = false;
+    f.ai.syncActors();
+    f.step(5);
+    f.ai.command('nap');
+    f.step(200);
+    assert.ok(f.modes.includes('lie-down'));
+    assert.ok(['sleep', 'side-sleep'].includes(f.ai.mode));
+    f.input.cursorActive = true;
+    f.input.idleDeadline = -1;
+    f.step(1200);
+    assert.ok(['sleep', 'side-sleep'].includes(f.ai.mode));
+    assert.equal(f.input.held, false);
+  } finally {
+    f.dispose();
   }
 });

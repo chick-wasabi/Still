@@ -37,13 +37,14 @@ Still brings your journal, tasks, and habits into one quiet corner of the intern
 
 ## 🐾 Meet your least productive teammate
 
-The cat is a textured tabby on an adapted 108-joint rig, with 12 supplied animation clips, Rapier physics, and a stochastic behavior engine. Now 45 pixels tall, with soft tabby fur and a flowing tail, it walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels. It lives in the page itself: scroll away and it leaves the screen with the content, then comes back where you left it (unless it has been busy being a cat).
+The cat is a textured tabby on an adapted 108-joint rig, with 12 supplied animation clips, 13 custom comfort clips, Rapier physics, and a stochastic behavior engine. Now 45 pixels tall, with soft tabby fur and a flowing tail, it walks, gallops, stretches, sleeps, belly-rolls, and occasionally auditions for a career in parkour on your UI panels. It lives in the page itself: scroll away and it leaves the screen with the content, then comes back where you left it (unless it has been busy being a cat).
 
 - **Drag and release the cat** to toss it. Fast wall impacts can produce a brief cling before gravity files its objection.
 - **Enable Play Ball in the top-right controls** (it starts off), then throw the toy ball and let the cat decide whether this meeting could have been a chase. Play sessions end, so the rest of your dashboard still gets a visit.
 - **Leave your pointer still for 6–8 seconds** and the cat may stalk it, grab its visual, and carry it around in its mouth for 5–10 seconds. Your native pointer stays visible until the cat actually reaches it.
 - **Move, click, or type** to reclaim control immediately. No ransom. No CAPTCHA. Mild judgment.
 - **Click the kitten** for a cycle of purrs, paw swats, head tilts, and a tiny hop. It might even meow, ask for pets, scratch a heading, or borrow a letter. All text returns intact.
+- **Let it settle in.** Loafing, kneading, grooming and longer naps give the sanctuary a quieter rhythm. Claw marks heal after 5–20 seconds; your actual writing stays untouched. Optional purring lives in Settings → Companion sounds and starts off.
 - **Use the pet and ball buttons** for keyboard-accessible play, or pause the companion from the top bar when it is time to be suspiciously productive.
 
 > [!NOTE]
@@ -137,4 +138,4 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source links, separate
 license terms, and modifications. Credits are also available in Settings → About
 & credits. Models and textures load locally; no Sketchfab iframe or service is used.
 
-The [feline behavior core](docs/FELINE_BEHAVIOR.md) documents breathing, gaze, paw IK, physical cursor pounces, visual DOM surfaces, letter mischief, and bounded ball play.
+The [feline behavior core](docs/FELINE_BEHAVIOR.md) documents calibrated gait, grounded comfort poses, 40–50-second naps, connected surface navigation, claw marks, and bounded ball play.

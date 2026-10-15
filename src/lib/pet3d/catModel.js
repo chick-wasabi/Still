@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
-import { createLegIK } from './legIK.js';
+import { createSupportSampler } from './contactMesh.js';
 import { CAT, PET_UNIT, KITTEN_HEIGHT } from './math.js';
 
 export const CAT_ASSET_URL = `${import.meta.env?.BASE_URL || '/'}models/still-tabby.v1.glb`;
@@ -8,13 +8,31 @@ export const CAT_ASSET_URL = `${import.meta.env?.BASE_URL || '/'}models/still-ta
 // Authored clips drive the fitted tabby skeleton. Rapier remains the sole owner of
 // document-space motion: animation root motion never moves the physics body.
 export function animationForMode(mode, speed = 0) {
+  const authored = {
+    sit: 'Still_Sit',
+    meow: 'Still_Sit',
+    'head-tilt': 'Still_Sit',
+    'lie-down': 'Still_Lie_Down',
+    'get-up': 'Still_Get_Up',
+    loaf: 'Still_Loaf',
+    sploot: 'Still_Sploot',
+    knead: 'Still_Knead',
+    sleep: 'Still_Sleep',
+    'side-sleep': 'Still_Side_Sleep',
+    roll: 'Still_Roll',
+    stretch: 'Still_Stretch',
+    scratch: 'Still_Scratch',
+    'scratch-rear': 'Still_Scratch_Rear',
+    purr: 'Still_Loaf',
+  };
+  if (authored[mode]) return authored[mode];
   if (['run', 'descend', 'run-away'].includes(mode)) return 'Cat_Gallop_Run';
   if (['walk', 'patrol', 'visit', 'carry', 'hunt'].includes(mode))
     return Math.abs(speed) > 2.4 ? 'Cat_Trot' : 'Cat_Walk';
   if (['stalk', 'stalk-ready', 'crouch', 'grab-letter'].includes(mode)) return 'Cat_Stalk_Hunt';
   if (['climb', 'cling'].includes(mode)) return 'Cat_Climb_Tree';
   if (['jump', 'fall', 'tossed', 'land', 'cursor-pounce'].includes(mode)) return 'Cat_Leap_Jump';
-  if (mode === 'groom') return 'Cat_Lick_Paw';
+  if (mode === 'groom') return 'Still_Groom';
   if (mode === 'bat') return 'Cat_Pounce_Attack';
   if (mode === 'grab' || mode === 'guard') return 'Cat_Bite_Attack';
   return 'Cat_Idle';
@@ -96,9 +114,9 @@ export function createCatModel(gltf) {
     actions = new Map();
   for (const original of gltf.animations) {
     const clip = original.clone();
-    // Keep spine/limb articulation but remove authored translation of the hips.
-    // Ballistic arcs and wall traversal come exclusively from the physics engine.
-    clip.tracks = clip.tracks.filter((t) => t.name !== `${byName.root.name}.position`);
+    // Hips translation is pose data (especially seated grooming), not travel.
+    // These clips are in-place. Retain all tracks; only the flight phase below
+    // removes the authored jump translation to avoid a second ballistic arc.
     actions.set(clip.name, mixer.clipAction(clip));
   }
   // The imported spine joints sit near the back's surface, rather than at the
@@ -113,27 +131,39 @@ export function createCatModel(gltf) {
   // Chin tip in this fitted rig's local coordinates (before global 45px scale).
   mouth.position.set(0, 0.012, 0.008);
   byName.jaw.add(mouth);
-  const legs = ['frontNear', 'frontFar', 'rearNear', 'rearFar'].map((name, i) => {
-    const foot = byName[name + 'Paw'],
-      position = foot.getWorldPosition(new THREE.Vector3());
-    return {
-      name,
-      phase: [0, 0.5, 0.5, 0][i],
-      foot,
-      solve: createLegIK(byName[name], byName[name + 'Knee'], foot),
-      sole: position.y + CAT.halfHeight,
-      target: new THREE.Vector3(),
-      locked: false,
-      anchor: 0,
-      weight: 0,
-    };
+  const legs = ['frontNear', 'frontFar', 'rearNear', 'rearFar'].map((name) => ({
+    name,
+    foot: byName[name + 'Paw'],
+    target: new THREE.Vector3(),
+    stance: false,
+    anchor: new THREE.Vector3(),
+    weight: 0,
+  }));
+  const motionData = gltf.asset?.extras?.stillMotion;
+  const body = skins[motionData?.body ?? 0];
+  const supportVertices = motionData?.supportVertices || [];
+  const bodyOrigin = new THREE.Vector3();
+  const supportSamplers = skins.flatMap((skin, index) => {
+    const seeds = motionData?.skinSupport?.[index] || (skin === body ? supportVertices : []);
+    return seeds.length ? [{ skin, sample: createSupportSampler(skin, seeds) }] : [];
   });
+  const tailStart = new THREE.Vector3(),
+    tailEnd = new THREE.Vector3(),
+    tailFrom = new THREE.Vector3(),
+    tailTo = new THREE.Vector3();
+  const tailDelta = new THREE.Quaternion(),
+    tailParent = new THREE.Quaternion(),
+    tailInverse = new THREE.Quaternion();
+  const tailChain = bones.filter((b) => b.name.startsWith('tail_'));
+  const profiles = motionData?.profiles || {};
+  let groundError = 0;
   const gaze = new THREE.Quaternion(),
     gazeTarget = new THREE.Quaternion();
   const gazeEuler = new THREE.Euler();
-  const weights = { sleep: 0, sit: 0, stretch: 0, scratch: 0, crouch: 0 };
+  const weights = { sleep: 0, crouch: 0 };
   let life = 0,
     distance = 0,
+    gaitPhase = 0,
     nextSaccade = 0,
     saccade = 0,
     blinkAt = -Infinity,
@@ -168,7 +198,8 @@ export function createCatModel(gltf) {
   let probe = null,
     probeMixer = null,
     probeAction = null,
-    probeMouth = null;
+    probeMouth = null,
+    probeRoot = null;
   const probeResult = new THREE.Vector3();
   function predictPounce(seconds, facing) {
     if (!probe) {
@@ -179,6 +210,7 @@ export function createCatModel(gltf) {
       body.position.copy(asset.position);
       body.rotation.copy(asset.rotation);
       probe = outer;
+      probeRoot = body.getObjectByName(byName.root.name);
       probeMouth = new THREE.Object3D();
       probeMouth.position.copy(mouth.position);
       body.getObjectByName(byName.jaw.name).add(probeMouth);
@@ -189,6 +221,7 @@ export function createCatModel(gltf) {
     probe.rotation.y = facing < 0 ? Math.PI + 0.16 : -0.16;
     probeAction.time = Math.min(1.85, 0.65 + seconds * 2);
     probeMixer.update(0);
+    probeRoot.position.copy(restByName.get(byName.root).p);
     probe.updateMatrixWorld(true);
     probeMouth.getWorldPosition(probeResult);
     return probeResult;
@@ -215,20 +248,18 @@ export function createCatModel(gltf) {
       t = reduced ? 0 : time;
     if (!reduced) {
       life += elapsed;
-      distance += motion.travel ?? Math.abs(speed) * elapsed;
+      const travel = motion.travel ?? Math.abs(speed) * elapsed;
+      if (
+        travel < 0.5 &&
+        !['drag', 'fall', 'tossed', 'climb', 'jump', 'cursor-pounce'].includes(mode)
+      )
+        distance += travel;
     }
-    const layerBlend = reduced ? 1 : 1 - Math.exp(-elapsed * 9);
-    for (const key of Object.keys(weights)) {
-      const on =
-        key === 'sit'
-          ? ['sit', 'meow', 'head-tilt'].includes(mode)
-          : key === 'scratch'
-            ? ['scratch', 'scratch-rear'].includes(mode)
-            : key === 'crouch'
-              ? ['crouch', 'stalk-ready'].includes(mode)
-              : mode === key;
-      weights[key] += ((on ? 1 : 0) - weights[key]) * layerBlend;
-    }
+    const layerBlend = reduced ? 1 : 1 - Math.exp(-elapsed * 6);
+    weights.sleep +=
+      ((['sleep', 'side-sleep'].includes(mode) ? 1 : 0) - weights.sleep) * layerBlend;
+    weights.crouch +=
+      ((['crouch', 'stalk-ready'].includes(mode) ? 1 : 0) - weights.crouch) * layerBlend;
     if (active !== action) {
       action.reset().setEffectiveWeight(1).setEffectiveTimeScale(1).play();
       if (active) {
@@ -236,7 +267,7 @@ export function createCatModel(gltf) {
         // contributing residual weights and producing tangled poses.
         for (const other of actions.values())
           if (other !== active && other !== action) other.stop();
-        active.crossFadeTo(action, 0.18, false);
+        active.crossFadeTo(action, 0.32, false);
       }
       active = action;
       clipName = nextName;
@@ -246,17 +277,22 @@ export function createCatModel(gltf) {
       action.stopFading().setEffectiveWeight(1);
     }
     const airborne = ['jump', 'fall', 'tossed', 'land', 'cursor-pounce'].includes(mode),
-      frozen =
-        reduced || ['sleep', 'sit', 'head-tilt', 'crouch', 'stalk-ready', 'cling'].includes(mode);
+      frozen = reduced || ['crouch', 'stalk-ready', 'cling'].includes(mode);
     const traveling = ['Cat_Walk', 'Cat_Trot', 'Cat_Gallop_Run', 'Cat_Stalk_Hunt'].includes(
       nextName,
     );
     action.paused = frozen || airborne || traveling;
     if (traveling && !frozen) {
-      const stride = nextName === 'Cat_Gallop_Run' ? 2.2 : nextName === 'Cat_Trot' ? 1.7 : 1.2;
-      action.time = ((distance / stride) % 1) * action.getClip().duration;
+      const stride = profiles[nextName]?.stride || 1.2;
+      const step = motion.travel ?? Math.abs(speed) * elapsed;
+      if (step < 0.5) gaitPhase = (gaitPhase + step / stride) % 1;
+      action.time = gaitPhase * action.getClip().duration;
     }
     if (frozen) action.time = mode === 'cling' ? 0.3 : 0;
+    if (['lie-down', 'get-up', 'roll', 'stretch', 'scratch', 'scratch-rear'].includes(mode)) {
+      action.paused = true;
+      action.time = Math.min(t, action.getClip().duration - 0.001);
+    }
     if (airborne) {
       // Use the authored tucked-flight pose during the actual physical arc;
       // crouching/landing are separate AI phases, not a second visual jump.
@@ -288,48 +324,9 @@ export function createCatModel(gltf) {
       basePose[i].q.copy(b.quaternion);
       basePose[i].s.copy(b.scale);
     });
-    byName.root.position.copy(restByName.get(byName.root).p);
-    const smooth = reduced ? 1 : 1 - Math.exp(-elapsed * 12);
-    let tilt = 0,
-      roll = 0,
-      lower = 0;
-    const curl = weights.sleep + weights.sit * 0.5;
-    if (curl) {
-      for (const b of [byName.rearNear, byName.rearFar]) rotate(b, axisX, -0.65 * curl);
-      for (const b of [byName.rearNearKnee, byName.rearFarKnee]) rotate(b, axisX, 1.0 * curl);
-      lower = -0.12 * curl;
-    }
-    if (weights.sleep > 0.001) {
-      roll = (weights.sleep * Math.PI) / 2;
-      lower = -0.22 * weights.sleep;
-      rotate(byName.neck, axisX, 0.45 * weights.sleep);
-      rotate(byName.head, axisY, 0.45 * weights.sleep);
-      rotate(byName.tail, axisY, 0.85 * weights.sleep);
-      for (const b of [byName.frontNear, byName.frontFar]) rotate(b, axisX, -0.65 * weights.sleep);
-      for (const b of [byName.frontNearKnee, byName.frontFarKnee])
-        rotate(b, axisX, 1.1 * weights.sleep);
-    }
-    if (weights.stretch > 0.001) {
-      const amount = Math.sin(Math.min(t / 3.5, 1) * Math.PI) * weights.stretch;
-      rotate(byName.chest, axisX, 0.25 * amount);
-      rotate(byName.neck, axisX, -0.22 * amount);
-      for (const b of [byName.frontNear, byName.frontFar]) rotate(b, axisX, 0.3 * amount);
-      lower = -0.08 * amount;
-    }
-    if (mode === 'roll') {
-      roll = Math.PI * (1 - Math.cos(Math.min(t / 2.5, 1) * Math.PI));
-      lower = -0.1;
-      for (const b of [byName.frontNear, byName.frontFar]) rotate(b, axisX, -0.8);
-      for (const b of [byName.frontNearKnee, byName.frontFarKnee]) rotate(b, axisX, 1.2);
-    }
-    if (weights.scratch > 0.001) {
-      tilt = (mode === 'scratch-rear' ? 0.65 : 0.32) * weights.scratch;
-      lower += (mode === 'scratch-rear' ? 0.28 : 0.15) * weights.scratch;
-      rotate(byName.frontNear, axisX, (-0.8 + Math.sin(life * 15) * 0.25) * weights.scratch);
-      rotate(byName.frontFar, axisX, (-0.8 - Math.sin(life * 15) * 0.25) * weights.scratch);
-      rotate(byName.frontNearKnee, axisX, 0.6 * weights.scratch);
-      rotate(byName.frontFarKnee, axisX, 0.6 * weights.scratch);
-    }
+    if (airborne) byName.root.position.copy(restByName.get(byName.root).p);
+    // Every comfort pose is a skeletal clip. The outer group never spins the cat.
+    pivot.rotation.set(0, 0, 0);
     if (!reduced && life >= nextBlink) {
       blinkAt = life;
       nextBlink = life + 3 + Math.random() * 4;
@@ -340,24 +337,17 @@ export function createCatModel(gltf) {
     [byName.eyeL, byName.eyeR].forEach((eye, i) => {
       eye.scale[eyeAxes[i]] *= 1 - Math.max(blink, weights.sleep * 0.94);
     });
-    if (mode === 'land') lower = -0.09 * Math.exp(-t * 10);
-    if (mode === 'bat')
-      rotate(
-        motion.strikeSide ? byName.frontFar : byName.frontNear,
-        axisX,
-        -Math.sin(Math.min(t / 0.7, 1) * Math.PI) * 0.35,
-      );
     if (mode === 'purr') rotate(byName.chest, axisX, Math.sin(t * 27) * 0.008);
     if (mode === 'head-tilt') rotate(byName.head, axisZ, 0.24 + Math.sin(t * 2) * 0.08);
     if (mode === 'meow' || holding)
       rotate(byName.jaw, axisX, holding ? 0.12 : Math.max(0, Math.sin(t * 5)) * 0.18);
     // Breathing never resets at a behavior boundary; spring-loaded crouches
-    // compress the back while paw IK keeps contact with the actual visual ledge.
+    // compress the back while the skin contact solve preserves the support plane.
     const breath = reduced ? 0 : Math.sin(life * 2.0) * 0.02;
     byName.chest.scale.x *= 1 + breath;
     byName.chest.scale.z *= 1 + breath;
     byName.spine.scale.z *= 1 - weights.crouch * 0.12 + breath * 0.35;
-    lower -= weights.crouch * 0.12;
+
     if (!reduced) {
       if (life >= nextSaccade) {
         nextSaccade = life + 0.2 + Math.random() * 0.55;
@@ -371,7 +361,7 @@ export function createCatModel(gltf) {
       );
       gazeTarget.setFromEuler(gazeEuler);
       gaze.slerp(gazeTarget, 1 - Math.exp(-elapsed * 8));
-      byName.head.quaternion.multiply(gaze);
+      if (weights.sleep < 0.7) byName.head.quaternion.multiply(gaze);
       rotate(byName.eyeL, axisY, look * 0.12);
       rotate(byName.eyeR, axisY, look * 0.12);
       if (Math.sin(life * 1.37) > 0.94 || mode === 'stalk-ready') {
@@ -381,52 +371,80 @@ export function createCatModel(gltf) {
       if (holding) rotate(byName.jaw, axisX, Math.sin(life * 9) * 0.06);
     }
 
-    if (previousMode === 'roll' && mode !== 'roll')
-      pivot.rotation.x =
-        THREE.MathUtils.euclideanModulo(pivot.rotation.x + Math.PI, Math.PI * 2) - Math.PI;
-    pivot.rotation.z = THREE.MathUtils.lerp(pivot.rotation.z, tilt, smooth);
-    pivot.rotation.x = THREE.MathUtils.lerp(pivot.rotation.x, roll, smooth);
-    pivot.position.y = THREE.MathUtils.lerp(pivot.position.y, lower, smooth);
+    // Low-amplitude secondary motion across the entire nine-joint tail. The
+    // imported clip supplies the principal shape; the tip responds after the base.
+    if (!reduced)
+      tailChain.forEach((bone, i) => {
+        const restfulness = weights.sleep;
+        const amplitude =
+          (mode === 'stalk-ready' ? 0.022 : 0.008) *
+          (i / tailChain.length + 0.25) *
+          (1 - restfulness * 0.92);
+        rotate(
+          bone,
+          axisY,
+          Math.sin(life * (mode === 'stalk-ready' ? 4 : 1.25) - i * 0.42) * amplitude,
+        );
+      });
     mesh.updateMatrixWorld(true);
-    for (const leg of legs) {
-      const sprint = nextName === 'Cat_Gallop_Run';
-      const phase =
-        (distance / (sprint ? 2.2 : nextName === 'Cat_Trot' ? 1.7 : 1.2) +
-          (sprint ? [0, 0.12, 0.5, 0.62][legs.indexOf(leg)] : leg.phase)) %
-        1;
-      const stance = !traveling || phase < (sprint ? 0.48 : 0.62);
-      const enabled =
-        !reduced &&
-        motion.grounded &&
-        motion.sampleGround &&
-        stance &&
-        !airborne &&
-        !['climb', 'cling', 'drag', 'roll', 'groom', 'bat'].includes(mode) &&
-        curl < 0.15 &&
-        (weights.scratch < 0.15 || leg.name.startsWith('rear'));
-      leg.weight += ((enabled ? 1 : 0) - leg.weight) * (1 - Math.exp(-elapsed * 18));
-      if (!enabled) {
-        if (leg.locked && leg.weight > 0.01 && motion.grounded && !airborne && curl < 0.15) {
-          leg.target.set(leg.anchor, leg.floor + leg.sole, leg.target.z);
-          leg.solve(leg.target, leg.weight);
-        } else leg.locked = false;
-        continue;
+    if (
+      motion.grounded &&
+      !airborne &&
+      !['climb', 'cling', 'drag'].includes(mode) &&
+      supportVertices.length
+    ) {
+      mesh.getWorldPosition(bodyOrigin);
+      const floor = motion.support?.top ?? bodyOrigin.y - CAT.halfHeight;
+      // A resting tail bends along the floor instead of lifting the whole body
+      // when its tip crosses the support plane.
+      for (let i = 0; i < tailChain.length - 1; i++) {
+        const joint = tailChain[i];
+        joint.getWorldPosition(tailStart);
+        tailChain[i + 1].getWorldPosition(tailEnd);
+        if (tailEnd.y >= floor + 0.04) continue;
+        tailFrom.subVectors(tailEnd, tailStart);
+        tailTo.copy(tailEnd);
+        tailTo.y = floor + 0.04;
+        tailTo.sub(tailStart);
+        if (tailTo.lengthSq() < 1e-8) continue;
+        tailDelta.setFromUnitVectors(tailFrom.normalize(), tailTo.normalize());
+        joint.parent.getWorldQuaternion(tailParent);
+        tailDelta
+          .premultiply(tailInverse.copy(tailParent).invert())
+          .multiply(tailParent)
+          .multiply(joint.quaternion);
+        joint.quaternion.slerp(tailDelta, 0.75);
+        joint.updateWorldMatrix(false, true);
       }
-      leg.foot.getWorldPosition(leg.target);
-      const floor = motion.sampleGround(leg.target.x, leg.target.y);
-      if (floor == null || Math.abs(leg.target.y - (floor + leg.sole)) > 0.65) {
-        leg.locked = false;
-        continue;
+      let lowest = Infinity;
+      for (const { skin, sample } of supportSamplers) {
+        skin.skeleton.update();
+        lowest = Math.min(lowest, sample());
       }
-      if (!leg.locked || Math.abs(leg.anchor - leg.target.x) > 0.8) {
-        leg.anchor = leg.target.x;
-        leg.locked = true;
-      }
-      leg.floor = floor;
-      leg.target.x = leg.anchor;
-      leg.target.y = floor + leg.sole;
-      leg.solve(leg.target, leg.weight);
+      const correction = THREE.MathUtils.clamp(floor - lowest, -1.5, 1.5);
+      pivot.position.y += correction;
+      mesh.updateMatrixWorld(true);
+      groundError = correction;
+    } else if (airborne || !motion.grounded) {
+      pivot.position.y = THREE.MathUtils.damp(pivot.position.y, 0, 12, elapsed);
+      mesh.updateMatrixWorld(true);
     }
+    // Contact correction changes the skeleton's world matrices. Publish that
+    // final pose now: renderer frame caches and CPU bounds/picking must not use
+    // the pre-correction skin matrices for a sleep/roll transition.
+    for (const skin of skins) skin.skeleton.update();
+    // Measured contact windows are diagnostic anchors. Do not overwrite the
+    // authored gait with a second assumed cycle: the old corrective IK caused
+    // 20px paw snaps. Sole calibration and measured stride supply flat-ground contact.
+    const profile = profiles[nextName],
+      phase = (action.time / action.getClip().duration) % 1;
+    const sample = profile?.samples[Math.floor(phase * profile.samples.length)];
+    legs.forEach((leg, i) => {
+      const stance = Boolean(sample && sample.feet[i][1] - sample.ground < 0.055);
+      leg.foot.getWorldPosition(leg.target);
+      if (stance && !leg.stance) leg.anchor.copy(leg.target);
+      leg.stance = stance && Boolean(motion.grounded) && !airborne;
+    });
     previousMode = mode;
   }
   update('idle', 0, 0, 0);
@@ -444,6 +462,12 @@ export function createCatModel(gltf) {
     },
     attachToMouth(object) {
       mouth.attach(object);
+    },
+    get contacts() {
+      return legs.map((l) => ({ name: l.name, stance: l.stance, anchor: l.anchor.toArray() }));
+    },
+    get groundError() {
+      return groundError;
     },
     get gaitDistance() {
       return distance;

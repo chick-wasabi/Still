@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CAT_ASSET_URL, createCatModel } from '../../lib/pet3d/catModel';
 import { createDirector } from '../../lib/pet3d/director';
+import { createPetSound } from '../../lib/pet3d/sound.js';
 import { createMouthProps } from '../../lib/pet3d/mouthProps.js';
 import { bindPetInput } from '../../lib/pet3d/input';
 import { CAT, GRAVITY, worldToScreen, worldBounds } from '../../lib/pet3d/math';
@@ -55,7 +56,12 @@ function Platforms({ layout }) {
           type="fixed"
           colliders={false}
           position={[(box.left + box.right) / 2, (box.top + box.bottom) / 2, 0]}
-          userData={{ kind: box.kind === 'wall' ? 'wall' : 'platform', id: box.id }}
+          userData={{
+            kind: box.kind === 'wall' ? 'wall' : 'platform',
+            id: box.id,
+            oneWay: box.oneWay,
+            top: box.top,
+          }}
         >
           <CuboidCollider
             args={[(box.right - box.left) / 2, (box.top - box.bottom) / 2, 0.65]}
@@ -166,14 +172,36 @@ function Actors({ layout, input, layer, onReady, gltf }) {
   const { camera, scene, invalidate, gl, setDpr } = useThree();
   useFilterContactPair((c1, c2, b1, b2) => {
     const handle = cat.current?.handle;
-    const other = b1 === handle ? b2 : b2 === handle ? b1 : null;
-    const id = other == null ? null : world.getRigidBody(other)?.userData?.id;
-    return input.dropThrough && input.dropThrough.id === id
-      ? 0
-      : rapier.SolverFlags.COMPUTE_IMPULSE;
+    const toyHandle = ball.current?.handle;
+    const actorHandle =
+      b1 === handle || b1 === toyHandle ? b1 : b2 === handle || b2 === toyHandle ? b2 : null;
+    const other = actorHandle === b1 ? b2 : b1;
+    const data = world.getRigidBody(other)?.userData;
+    if (actorHandle === handle && input.dropThrough && input.dropThrough.id === data?.id) return 0;
+    if (data?.oneWay && actorHandle != null) {
+      const half = actorHandle === handle ? CAT.halfHeight : 0.13;
+      const startBottom = (actorHandle === handle ? input.physicsCatY : input.physicsBallY) - half;
+      const velocity = actorHandle === handle ? input.physicsCatVY : input.physicsBallVY;
+      // Rust owns the simulation during a contact callback: never re-enter it
+      // with translation()/linvel(). Read the pre-step snapshot instead.
+      if (velocity > 0.15 || startBottom < data.top - 0.075) return 0;
+    }
+    return rapier.SolverFlags.COMPUTE_IMPULSE;
   });
   const mouth = useMemo(() => new THREE.Vector3(), []);
   input.predictPounce = model.predictPounce;
+  const sound = useRef();
+  useEffect(() => {
+    sound.current = createPetSound(input);
+    input.muteSound = () => sound.current?.silence();
+    return () => {
+      sound.current?.dispose();
+      input.muteSound = null;
+    };
+  }, [input]);
+  useEffect(() => {
+    sound.current?.update();
+  }, [input, input.paused, input.soundEnabled, input.catEnabled]);
   const props = useMemo(() => createMouthProps(model, scene), [model, scene]);
   useEffect(() => () => props.dispose(), [props]);
   const paws = useMemo(() => Array.from({ length: 4 }, () => new THREE.Vector3()), []);
@@ -204,6 +232,7 @@ function Actors({ layout, input, layer, onReady, gltf }) {
   const frameStats = useRef({ frames: 0, total: 0, telemetry: 0, dpr: 1 });
   useEffect(() => {
     cat.current.collider(0).setActiveHooks(rapier.ActiveHooks.FILTER_CONTACT_PAIRS);
+    ball.current.collider(0).setActiveHooks(rapier.ActiveHooks.FILTER_CONTACT_PAIRS);
     const ai = createDirector({
       cat: cat.current,
       ball: ball.current,
@@ -216,6 +245,16 @@ function Actors({ layout, input, layer, onReady, gltf }) {
       },
     });
     director.current = ai;
+    if (import.meta.env.DEV && new URLSearchParams(location.search).get('petDebug') === '1')
+      layer.current.__petDebug = {
+        input,
+        ai,
+        cat: cat.current,
+        ball: ball.current,
+        layout: currentLayout,
+        model,
+        world,
+      };
     ai.initialize();
     const unbind = bindPetInput({
       input,
@@ -250,6 +289,7 @@ function Actors({ layout, input, layer, onReady, gltf }) {
       unbind();
       ai.dispose();
       director.current = null;
+      if (import.meta.env.DEV && layer.current) delete layer.current.__petDebug;
     };
   }, [camera, scene, gl, world, rapier, input, model, invalidate, onReady, layer]);
   useEffect(() => () => model.dispose(), [model]);
@@ -277,8 +317,15 @@ function Actors({ layout, input, layer, onReady, gltf }) {
 
   useBeforePhysicsStep(() => {
     if (input.ready && !input.paused && !input.reduced) director.current?.step(1 / 60);
+    // CCD may evaluate a contact after the integrated body crossed a 1px ledge.
+    // Classify its approach from the pre-step position, not that penetrated pose.
+    input.physicsCatY = cat.current?.translation().y;
+    input.physicsBallY = ball.current?.translation().y;
+    input.physicsCatVY = cat.current?.linvel().y;
+    input.physicsBallVY = ball.current?.linvel().y;
   });
   useFrame((_, dt) => {
+    sound.current?.update();
     if (visual.current) visual.current.visible = input.catEnabled;
     if (ballVisual.current) ballVisual.current.visible = input.ballEnabled;
     const mode = input.reduced ? 'sleep' : input.mode;
@@ -304,12 +351,15 @@ function Actors({ layout, input, layer, onReady, gltf }) {
       motion.travel = motion.lastX == null || input.drag ? 0 : Math.abs(body.x - motion.lastX);
       motion.lastX = body.x;
       motion.grounded = input.grounded;
+      motion.support = input.support;
       motion.lookY = (attention.y - input.catPosition.y) / 3;
       motion.pointerSpeed = input.pointerSpeed;
       motion.strikeSide = input.strikeSide || 0;
       model.update(
         mode,
-        input.stateTime,
+        input.debugPose && input.debugPose !== 'auto' && input.debugTime != null
+          ? input.debugTime
+          : input.stateTime,
         Math.min(dt, 0.05),
         input.speed,
         look,
@@ -438,6 +488,14 @@ function Actors({ layout, input, layer, onReady, gltf }) {
         felineState: input.behaviorLabel || 'IDLE_BREATH',
         captureDistance: String(input.captureDistance ?? -1),
         gaitDistance: String(model.gaitDistance),
+        supportId: input.support?.id || '',
+        supportY: String(input.support?.top ?? ''),
+        groundCorrection: String(model.groundError),
+        intention: input.intention || '',
+        energy: String(input.energy || 0),
+        routeLength: String(input.navigationRoute?.length || 0),
+        routeFailures: String(input.routeFailures || 0),
+        stuckRecoveries: String(input.stuckRecoveries || 0),
         letterReleasing: String(
           Boolean(input.letterRelease && performance.now() / 1000 - input.letterRelease.at < 0.7),
         ),

@@ -1,7 +1,6 @@
 import {
   CAT,
   GRAVITY,
-  behavior,
   choose,
   clamp,
   length,
@@ -14,6 +13,8 @@ import {
 import { maskToyContacts, restoreToyContacts } from './toyPhysics.js';
 import { createBehaviorBrain } from './brain.js';
 import { createTextMischief } from './textMischief.js';
+import { findSurfaceRoute, supportAt } from './navigation.js';
+import { BEHAVIORS, RESTING, COMFORT, behaviorDuration } from './behaviorConfig.js';
 
 // Physics owns translation. The director only chooses velocities/impulses and animation states.
 export function createDirector({
@@ -58,15 +59,23 @@ export function createDirector({
     cursorPlanUntil = 0,
     cursorAim = null,
     pendingBat = null,
-    climbSpeed = 0;
+    climbSpeed = 0,
+    restNext = null,
+    lastProgress = null,
+    pendingScratch = null;
+  const cooldowns = {},
+    blockedEdges = new Map(),
+    occupancy = {};
   const brain = createBehaviorBrain();
   const recent = [],
     visits = new Map();
   const mischief =
     input.host && typeof document !== 'undefined' ? createTextMischief(input.host, input) : null;
-  input.restoreMischief = () => mischief?.dispose();
-  const pages = new Map(),
-    scratches = new Map();
+  input.restoreMischief = () => {
+    mischief?.restoreLetter();
+    mischief?.healScratch();
+  };
+  const pages = new Map();
   const fixed = (c) =>
     c.parent()?.isFixed() &&
     !c.isSensor() &&
@@ -121,12 +130,7 @@ export function createDirector({
     cursorHunt = false;
   }
   function surfaceAt(p, l = layout()) {
-    return l.surfaces.find(
-      (s) =>
-        Math.abs(p.y - CAT.halfHeight - s.top) < 0.14 &&
-        p.x + CAT.halfWidth > s.left &&
-        p.x - CAT.halfWidth < s.right,
-    );
+    return supportAt(p, l.surfaces);
   }
   function home(randomized = false) {
     const l = layout(),
@@ -183,7 +187,8 @@ export function createDirector({
     const initial = randomizeSpawn
       ? choose(['sleep', 'sit', 'stretch', 'groom', 'idle', 'head-tilt'])
       : 'idle';
-    setMode(initial, randomRange(1.2, 3.8));
+    setMode(initial, behaviorDuration(initial));
+    restNext = null;
     input.spawnBehavior = initial;
     syncActors();
     revision = l.revision;
@@ -196,7 +201,7 @@ export function createDirector({
       cat.collider(0).setCollisionGroups(catOn ? catGroups : 0);
       if (!catOn) {
         releaseCursor();
-        mischief?.dispose();
+        input.restoreMischief();
         goal = null;
       }
     }
@@ -268,10 +273,17 @@ export function createDirector({
         if (moved) {
           const dx = moved.left - support.left,
             dy = moved.top - support.top;
-          if (dx || dy) body.setTranslation({ x: p.x + dx, y: p.y + dy, z: 0 }, true);
+          if ((dx || dy) && !support.sticky)
+            body.setTranslation({ x: p.x + dx, y: p.y + dy, z: 0 }, true);
         }
       }
-      if (!clearBody(cat.translation(), l.boxes, l.bounds)) {
+      if (
+        !clearBody(
+          cat.translation(),
+          l.boxes.filter((b) => !b.oneWay),
+          l.bounds,
+        )
+      ) {
         const nearest = [...l.surfaces]
           .sort(
             (a, b) =>
@@ -294,7 +306,7 @@ export function createDirector({
         goal.surface = updated.surface || goal.surface;
       } else {
         goal = null;
-        mischief?.dispose();
+        input.restoreMischief();
       }
     }
     if (climbing) {
@@ -345,34 +357,30 @@ export function createDirector({
     dropBall();
     cat.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
     cat.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    setMode('climb', Math.min(9, (climbing.goal - p.y) / 2.4 + 0.5));
+    setMode('climb', Math.min(60, (climbing.goal - p.y) / 2.4 + 2));
     return true;
   }
   function scratch(targetText = null) {
-    const l = layout(),
-      p = cat.translation();
-    const text =
-      targetText ||
-      l.textTargets
-        ?.filter((t) => t.node.isConnected)
-        .sort((a, b) => length(a.point, p) - length(b.point, p))[0];
-    if (text && mischief) mischief.scratch(text);
-    else {
-      const element = l.elementsById?.get(surfaceAt(p)?.id);
-      if (element) {
-        element.setAttribute('data-pet-scratched', 'true');
-        clearTimeout(scratches.get(element));
-        scratches.set(
-          element,
-          setTimeout(() => {
-            element.removeAttribute('data-pet-scratched');
-            scratches.delete(element);
-          }, 850),
-        );
+    const p = cat.translation(),
+      l = layout();
+    const nearby = (l.textTargets || []).filter(
+      (t) => t.node.isConnected && length(t.point, p) < 2.2,
+    );
+    const text = targetText || nearby.sort((a, b) => length(a.point, p) - length(b.point, p))[0];
+    pendingScratch = { target: text, at: time + 0.4, strikes: 0, next: time + 0.4 };
+    setMode(text && text.point.y > p.y + 0.2 ? 'scratch-rear' : 'scratch', 2.4);
+  }
+  function beginActivity(next) {
+    cooldowns[next] = time + (BEHAVIORS[next]?.cooldown || 0);
+    if (COMFORT.has(next)) {
+      const s = surfaceAt(cat.translation());
+      if (!s || s.right - s.left < (next === 'roll' || next === 'sploot' ? 3 : 1.8)) {
+        setMode('sit', behaviorDuration('sit'));
+        return;
       }
-    }
-    setMode(choose(['scratch', 'scratch-rear']), randomRange(1, 1.7));
-    if (Math.random() < 0.4) say('tiny claws!');
+      restNext = next === 'sleep' && Math.random() < 0.35 ? 'side-sleep' : next;
+      setMode('lie-down', 2.4);
+    } else setMode(next, behaviorDuration(next));
   }
   function visit(surface, action = 'explore', textTarget = null) {
     if (!surface) return false;
@@ -387,7 +395,7 @@ export function createDirector({
             : clamp(cat.translation().x + randomRange(-4, 4), surface.left, surface.right),
         y: surface.top,
       },
-      expires: time + (action === 'cursor' ? randomRange(8, 12) : randomRange(4, 7)),
+      expires: time + (action === 'cursor' ? 22 : 60),
     };
     return pursueGoal();
   }
@@ -396,95 +404,73 @@ export function createDirector({
     const l = layout(),
       p = cat.translation(),
       g = goal;
+    const updated = l.surfaces.find((s) => s.id === g.surface.id);
+    if (updated) g.surface = updated;
+    const width = g.surface.right - g.surface.left - 2 * CAT.halfWidth - 0.08;
     const dest = perch(
       g.surface,
       l.boxes,
       l.bounds,
-      clamp((g.point.x - g.surface.left) / (g.surface.right - g.surface.left), 0, 1),
+      clamp((g.point.x - g.surface.left - CAT.halfWidth - 0.04) / Math.max(width, 0.01), 0, 1),
     );
     if (!dest || time > g.expires) {
       goal = null;
-      setMode('idle', 1);
+      setMode('idle', 2);
       return false;
     }
-    if (length(p, dest) < 0.28) {
+    const current = surfaceAt(p);
+    if (current?.id === g.surface.id && Math.abs(p.x - dest.x) < 0.22) {
       goal = null;
+      input.navigationRoute = [];
       visits.set(g.surface.id, (visits.get(g.surface.id) || 0) + 1);
       if (g.action === 'cursor') setMode('stalk-ready', randomRange(0.45, 0.8));
       else if (g.action === 'retreat') setMode('guard', randomRange(1, 2));
+      else if (g.action === 'hunt') setMode('hunt', 4);
       else if (g.action === 'scratch') scratch(g.textTarget);
       else if (g.action === 'steal-letter') {
         if (mischief?.steal(g.textTarget, Math.random, input.mouth)) {
           setMode('grab-letter', 0.8);
-          say(choose(['mine now', 'mrrp?', 'a tiny souvenir']));
-        } else setMode('head-tilt', 1.8);
-      } else setMode(choose(['sit', 'groom', 'idle', 'head-tilt']), randomRange(1, 3));
+          say('a tiny souvenir');
+        } else setMode('head-tilt', 3);
+      } else beginActivity(choose(['sit', 'groom', 'idle', 'loaf']));
       return true;
     }
-    const current = surfaceAt(p);
     if (
       current?.id === g.surface.id &&
       walkTo(
         dest.x,
         g.action === 'retreat' ? 'run-away' : g.action === 'cursor' ? 'stalk' : 'visit',
-        Math.min(9, Math.abs(dest.x - p.x) / 1.6 + 1),
+        20,
       )
     )
       return true;
-    if (
-      current &&
-      current.kind !== 'text' &&
-      dest.y < p.y - 0.7 &&
-      dest.x > current.left + CAT.halfWidth &&
-      dest.x < current.right - CAT.halfWidth
-    ) {
-      if (
-        Math.abs(dest.x - p.x) > 0.2 &&
-        walkTo(dest.x, g.action === 'cursor' ? 'stalk' : 'visit', 3)
-      )
-        return true;
-      input.dropThrough = { id: current.id, top: current.top, until: time + 2 };
-      cat.setLinvel({ x: 0, y: -1, z: 0 }, true);
-      airborneSince = time;
-      afterLanding = 'visit';
-      setMode('fall', 4);
+    for (const [key, expires] of blockedEdges) if (time > expires) blockedEdges.delete(key);
+    const route = findSurfaceRoute(p, g.surface, l, new Set(blockedEdges.keys()));
+    input.navigationRoute =
+      route?.map((edge) => ({
+        x: edge.point.x,
+        y: edge.point.y,
+        kind: edge.walk ? 'walk' : 'jump',
+      })) || [];
+    if (route?.length) {
+      const edge = route[0];
+      input.currentEdge = edge.key;
+      if (edge.walk) return walkTo(edge.point.x, g.action === 'retreat' ? 'run-away' : 'visit', 20);
+      target = edge.point;
+      launch = {
+        velocity: edge.velocity,
+        after: 'visit',
+        dropId: edge.dropId,
+        duration: edge.velocity.time,
+      };
+      setMode('crouch', randomRange(0.22, 0.4));
       return true;
     }
-    if (startJump(g.surface, 'visit')) return true;
-    if (current) {
-      const x = clamp(
-        dest.x,
-        current.left + CAT.halfWidth + 0.05,
-        current.right - CAT.halfWidth - 0.05,
-      );
-      if (Math.abs(x - p.x) > 0.4 && walkTo(x, 'visit', Math.min(9, Math.abs(x - p.x) / 1.6 + 1)))
-        return true;
-    }
-    const distance = length(p, dest);
-    const bridges = [...l.surfaces]
-      .filter((s) => s.id !== current?.id && s.id !== g.surface.id)
-      .map((s) => ({ s, p: perch(s, l.boxes, l.bounds) }))
-      .filter(
-        (t) =>
-          t.p &&
-          Math.abs(t.p.x - p.x) <= 16 &&
-          t.p.y - p.y <= 6 &&
-          p.y - t.p.y <= 9 &&
-          length(t.p, dest) < distance - 0.25,
-      )
-      .sort((a, b) => length(a.p, dest) - length(b.p, dest));
-    if (bridges.slice(0, 10).some((t) => startJump(t.s, 'visit'))) return true;
-    if (current && dest.y < p.y - 1 && (!input.viewport || dest.y > input.viewport.bottom + 0.5)) {
-      const side = dest.x < p.x ? -1 : 1,
-        edgeX = side < 0 ? current.left : current.right;
-      if (walkTo(edgeX, 'descend', 8)) {
-        target.x = edgeX + side * (CAT.halfWidth + 0.35);
-        afterLanding = 'visit';
-        return true;
-      }
-    }
+    // Recovery is a physical route, never a reset or a decorative grooming loop.
+    if (l.boxes.filter((b) => b.kind === 'wall').some(startClimb)) return true;
     goal = null;
-    setMode('head-tilt', 1.2);
+    setMode('idle', 2);
+    input.routeFailures = (input.routeFailures || 0) + 1;
     return false;
   }
   function chooseText(action) {
@@ -540,7 +526,7 @@ export function createDirector({
       if (!clearBody({ x: p.x + ((dest.x - p.x) * i) / 20, y: p.y }, l.boxes, l.bounds))
         return false;
     target = dest;
-    setMode(next, Math.min(duration, randomRange(1.8, 3.8)));
+    setMode(next, Math.min(duration, Math.abs(dest.x - p.x) / (next === 'run' ? 4.5 : 1.6) + 1.5));
     return true;
   }
   function stalk() {
@@ -654,6 +640,9 @@ export function createDirector({
     return {
       energy,
       previous,
+      time,
+      cooldowns: { ...cooldowns },
+      space: (surfaceAt(cat.translation())?.right || 0) - (surfaceAt(cat.translation())?.left || 0),
       recent: [...recent],
       cursor: false,
       ball:
@@ -691,9 +680,9 @@ export function createDirector({
     if (recent.length > 3) recent.shift();
     if (next === 'hunt' && time >= interestUntil) interestUntil = time + randomRange(4, 7);
     previous = next;
-    energy = clamp(energy + (next === 'sleep' ? 0.3 : -0.06), 0, 1);
+    cooldowns[next] = time + (BEHAVIORS[next]?.cooldown || 0);
     if (next === 'scratch' || next === 'steal-letter') {
-      if (!chooseText(next)) scratch();
+      if (!chooseText(next)) beginActivity('idle');
       return;
     }
     if (next === 'meow') {
@@ -703,24 +692,19 @@ export function createDirector({
     }
     if (next === 'climb') {
       if (layout().boxes.some(startClimb)) return;
-      scratch();
+      beginActivity('idle');
       return;
     }
     if (next === 'jump' || next === 'explore') {
       const candidates = [...layout().surfaces]
-        .filter(
-          (s) =>
-            s.id !== surfaceAt(cat.translation())?.id &&
-            (!input.viewport ||
-              (s.top < input.viewport.top - 0.8 && s.top > input.viewport.bottom + 0.5)),
-        )
+        .filter((s) => s.id !== surfaceAt(cat.translation())?.id)
         .map((s) => ({ s, score: Math.random() / (1 + (visits.get(s.id) || 0) * 2) }))
         .sort((a, b) => b.score - a.score);
       const ranked = recommendation.routes
         .map((id) => candidates.find((t) => t.s.id === id))
         .filter(Boolean);
       for (const { s } of [...ranked, ...candidates].slice(0, 16)) if (visit(s)) return;
-      setMode('groom', 2);
+      beginActivity('idle');
       return;
     }
     if (next === 'walk' || next === 'run') {
@@ -745,17 +729,9 @@ export function createDirector({
       cursorHunt = false;
       return;
     }
-    setMode(
-      next,
-      next === 'sleep'
-        ? randomRange(2.5, 5)
-        : next === 'roll'
-          ? 3.2
-          : next === 'stretch'
-            ? 4
-            : randomRange(2.5, 5),
-    );
+    beginActivity(next);
   }
+
   function impactWall(id) {
     if (disposed || input.drag || mode === 'cling' || mode === 'climb' || speedBefore < 5) return;
     if (startClimb(layout().boxes.find((b) => b.id === id))) return;
@@ -766,6 +742,13 @@ export function createDirector({
     setMode('cling', clingUntil - time);
   }
   function command(action) {
+    if (action === 'nap') {
+      input.wasDebug = false;
+      releaseCursor();
+      goal = null;
+      beginActivity('sleep');
+      return;
+    }
     if (action === 'pet' && grounded) {
       releaseCursor();
       goal = null;
@@ -817,6 +800,18 @@ export function createDirector({
     }
     const p = cat.translation(),
       v = cat.linvel();
+    energy = clamp(
+      energy +
+        dt *
+          (mode === 'sleep' || mode === 'side-sleep' ? 0.012 : RESTING.has(mode) ? 0.001 : -0.004),
+      0,
+      1,
+    );
+    const family = BEHAVIORS[mode]?.family || (RESTING.has(mode) ? 'rest' : 'transition');
+    occupancy[family] = (occupancy[family] || 0) + dt;
+    input.occupancy = occupancy;
+    input.energy = energy;
+    input.intention = family;
     if (
       input.dropThrough &&
       (time > input.dropThrough.until || p.y + CAT.halfHeight < input.dropThrough.top - 0.12)
@@ -825,7 +820,7 @@ export function createDirector({
     const excitement =
       time < interestUntil || cursorHunt
         ? 1
-        : ['sleep', 'groom', 'sit'].includes(mode)
+        : ['sleep', 'side-sleep', 'loaf', 'sploot', 'groom', 'sit'].includes(mode)
           ? 0.15
           : 0.5;
     input.arousal =
@@ -864,9 +859,44 @@ export function createDirector({
         Boolean(ray({ x: p.x + dx, y: p.y })),
       );
     input.grounded = grounded;
+    const supported = grounded ? surfaceAt(p) : null;
+    input.support = supported
+      ? {
+          id: supported.id,
+          top: supported.top,
+          normal: { x: 0, y: 1 },
+          left: supported.left,
+          right: supported.right,
+        }
+      : null;
     input.speed = v.x;
     input.stateTime = time - since;
     input.time = time;
+    if (input.debugDestination) {
+      const dest = l.surfaces.find((s) => s.id === input.debugDestination);
+      input.debugDestination = null;
+      input.wasDebug = false;
+      if (dest) visit(dest);
+    }
+    if (input.debugPose && input.debugPose !== 'auto') {
+      if (mode !== input.debugPose) setMode(input.debugPose, Infinity);
+      input.wasDebug = true;
+      const support = surfaceAt(p),
+        moving = ['walk', 'run'].includes(mode);
+      let vx = moving ? (mode === 'run' ? 4 : 1.6) * input.facing : 0;
+      if (
+        support &&
+        (p.x > support.right - CAT.halfWidth - 0.15 || p.x < support.left + CAT.halfWidth + 0.15)
+      ) {
+        input.facing = -input.facing;
+        vx = -vx;
+      }
+      cat.setLinvel({ x: vx, y: v.y, z: 0 }, true);
+      return;
+    } else if (input.wasDebug) {
+      input.wasDebug = false;
+      setMode('idle', 1);
+    }
     if (input.carryingBall) {
       if (input.drag || input.held) dropBall();
       else {
@@ -880,6 +910,9 @@ export function createDirector({
       }
     }
     if (input.drag?.kind === 'cat') {
+      goal = null;
+      restNext = null;
+      lastProgress = null;
       setModeIfDifferent('drag');
       return;
     }
@@ -1041,9 +1074,13 @@ export function createDirector({
       !writing &&
       !input.pressed &&
       performance.now() > input.idleDeadline &&
-      !cursorHunt
+      !cursorHunt &&
+      !RESTING.has(mode) &&
+      !['groom', 'knead', 'roll', 'stretch', 'scratch', 'scratch-rear'].includes(mode)
     ) {
-      stalk();
+      // Inactivity is an opportunity, not a repeated command to abandon rest.
+      input.idleDeadline = performance.now() + randomRange(12000, 22000);
+      if (Math.random() < 0.45) stalk();
       return;
     }
     if (mode === 'stalk-ready' && time >= until) {
@@ -1077,10 +1114,19 @@ export function createDirector({
       }
       const direction = Math.sign(target.x - p.x),
         speed = ['run', 'descend', 'run-away'].includes(mode) ? 5.7 : mode === 'stalk' ? 3.4 : 1.6;
-      cat.setLinvel(
-        { x: direction * Math.min(speed, Math.abs(target.x - p.x) * 5), y: v.y, z: 0 },
-        true,
-      );
+      const wanted = direction * Math.min(speed, Math.max(0.65, Math.abs(target.x - p.x) * 4));
+      cat.setLinvel({ x: v.x + clamp(wanted - v.x, -dt * 40, dt * 40), y: v.y, z: 0 }, true);
+      if (!lastProgress || lastProgress.mode !== mode || length(p, lastProgress.point) > 0.12)
+        lastProgress = { point: { ...p }, at: time, mode };
+      else if (time - lastProgress.at > 1.8) {
+        if (input.currentEdge) blockedEdges.set(input.currentEdge, time + 15);
+        lastProgress = null;
+        input.stuckRecoveries = (input.stuckRecoveries || 0) + 1;
+        cat.setLinvel({ x: 0, y: v.y, z: 0 }, true);
+        if (goal) pursueGoal();
+        else decide();
+        return;
+      }
       input.facing = direction;
     } else if (mode === 'hunt') {
       if (!input.ballEnabled || time > interestUntil) {
@@ -1133,15 +1179,38 @@ export function createDirector({
               if (walkTo(edgeX, 'descend', 12)) {
                 target.x = edgeX + side * (CAT.halfWidth + 0.5);
                 afterLanding = 'hunt';
-              } else setMode('idle', 1.5);
+              } else if (!visit(candidates[0], 'hunt')) setMode('idle', 1.5);
             } else setMode('idle', 1.5);
           }
         }
       }
     } else {
       if (Math.abs(v.x) > 0.02) cat.setLinvel({ x: v.x * Math.exp(-dt * 10), y: v.y, z: 0 }, true);
+      if (
+        pendingScratch &&
+        ['scratch', 'scratch-rear'].includes(mode) &&
+        time >= pendingScratch.next &&
+        pendingScratch.strikes < 3
+      ) {
+        const paw = input.paws?.[pendingScratch.strikes % 2];
+        if (paw) mischief?.scratch(pendingScratch.target, paw);
+        pendingScratch.strikes++;
+        pendingScratch.next = time + 0.5;
+      }
       if (time >= until) {
-        if (goal) pursueGoal();
+        if (mode === 'lie-down' && restNext) {
+          const next = restNext;
+          restNext = null;
+          setMode(next, next === 'side-sleep' ? behaviorDuration('sleep') : behaviorDuration(next));
+          if (['sleep', 'side-sleep'].includes(next) && Math.random() < 0.4) say('purr…');
+        } else if (COMFORT.has(mode) || mode === 'side-sleep') {
+          if (['loaf', 'knead', 'sploot'].includes(mode) && energy < 0.6 && Math.random() < 0.45)
+            setMode('sleep', behaviorDuration('sleep'));
+          else setMode('get-up', 2.4);
+        } else if (mode === 'get-up') {
+          if (Math.random() < 0.35) beginActivity('stretch');
+          else decide();
+        } else if (goal) pursueGoal();
         else decide();
       }
     }
@@ -1172,12 +1241,8 @@ export function createDirector({
       mischief?.dispose();
       input.restoreMischief = null;
       input.bubble = null;
+      pendingScratch = null;
       dropBall();
-      for (const [element, timer] of scratches) {
-        clearTimeout(timer);
-        element.removeAttribute('data-pet-scratched');
-      }
-      scratches.clear();
       releaseCursor();
     },
     get playingBall() {

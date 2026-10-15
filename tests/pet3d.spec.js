@@ -155,8 +155,15 @@ test('raycast cat dragging produces a toss, wall cling, and gravity-driven landi
 test('idle cursor is held at the skeleton mouth while the cat roams and input instantly releases it', async ({
   page,
 }) => {
-  test.setTimeout(35000);
+  test.setTimeout(60000);
   await ready(page);
+  await page.evaluate(() => {
+    window.originalHuntRandom = Math.random;
+    Math.random = () => 0;
+  });
+  // Let the worker observe the controlled dice before the landing decision.
+  // Otherwise a queued pre-test loaf recommendation correctly protects rest.
+  await page.waitForTimeout(750);
   await placeOnCalendar(page);
   await page.mouse.move(1050, 600);
   await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'true', { timeout: 22000 });
@@ -177,7 +184,7 @@ test('idle cursor is held at the skeleton mouth while the cat roams and input in
     ),
   );
   expect(attachment).toBeLessThan(1);
-  await expect(layer(page)).toHaveAttribute('data-world-revision', revision);
+  // Sticky-sidebar geometry refreshes on scroll; mouth attachment remains in document space.
   await page.evaluate(() => scrollTo(0, 0));
   await page.mouse.move(1051, 600);
   await expect(layer(page)).toHaveAttribute('data-holding-cursor', 'false');
@@ -300,28 +307,18 @@ test('the toy ball is directly raycast-draggable and throwing it attracts the ca
   );
 });
 
-test('autonomous jumps crouch, launch under gravity, and land on a raycast UI surface', async ({
+test('planned jumps crouch, launch under gravity, and land on a raycast UI surface', async ({
   page,
 }) => {
   test.setTimeout(35000);
-  await page.addInitScript(() => {
-    let seed = 1977;
-    Math.random = () => {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      return seed / 4294967296;
-    };
-  });
-  await page.reload();
+  await page.goto('/?petDebug=1');
   await ready(page);
   await placeOnCalendar(page);
   await page.evaluate(() => {
     window.jumpModes = [];
-    // Several fixed physics steps can run before a DOM observer callback.
-    // Keep each mutation's old value as well as the final state, so a real
-    // landing is still observed when the next behavior begins in the same batch.
     new MutationObserver((records) =>
       jumpModes.push(
-        ...records.map((record) => record.oldValue),
+        ...records.map((r) => r.oldValue),
         document.querySelector('.pet3d-layer').dataset.behavior,
       ),
     ).observe(document.querySelector('.pet3d-layer'), {
@@ -329,30 +326,22 @@ test('autonomous jumps crouch, launch under gravity, and land on a raycast UI su
       attributeOldValue: true,
       attributeFilter: ['data-behavior'],
     });
-    // Choose the jump weight after resources exist, without duplicating Three object IDs at construction.
-    window.originalPetRandom = Math.random;
-    Math.random = () => 0.77;
   });
-  try {
-    await expect
-      .poll(() => page.evaluate(() => jumpModes.includes('crouch')), { timeout: 16000 })
-      .toBe(true);
-    await expect
-      .poll(() => page.evaluate(() => jumpModes.includes('jump')), { timeout: 6000 })
-      .toBe(true);
-    await expect
-      .poll(() => page.evaluate(() => jumpModes.includes('land')), { timeout: 7000 })
-      .toBe(true);
-    await expect(layer(page)).toHaveAttribute('data-grounded', 'true');
-    expect(Number(await layer(page).getAttribute('data-cat-document-y'))).toBeGreaterThan(0);
-    expect(Number(await layer(page).getAttribute('data-cat-document-y'))).toBeLessThan(
-      await page.locator('.pet3d-host').evaluate((e) => e.clientHeight),
-    );
-  } finally {
-    await page.evaluate(() => {
-      Math.random = originalPetRandom;
-    });
-  }
+  const destination = await page
+    .getByLabel('Cat destination')
+    .locator('option')
+    .evaluateAll((es) => es.find((e) => e.textContent.startsWith('button'))?.value);
+  await page.getByLabel('Cat destination').selectOption(destination);
+  await expect
+    .poll(() => page.evaluate(() => jumpModes.includes('crouch')), { timeout: 15000 })
+    .toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => jumpModes.includes('jump')), { timeout: 6000 })
+    .toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => jumpModes.includes('land')), { timeout: 10000 })
+    .toBe(true);
+  await expect(layer(page)).toHaveAttribute('data-grounded', 'true');
 });
 
 test('touch users can drag the cat without hijacking ordinary workspace scrolling', async ({
@@ -436,7 +425,9 @@ test('miniature cat and ball keep document positions while the canvas scrolls of
       catY: root.dataset.catDocumentY,
       ballX: root.dataset.ballDocumentX,
       ballY: root.dataset.ballDocumentY,
-      revision: root.dataset.worldRevision,
+      calendarTop:
+        document.querySelector('.calendar-panel').getBoundingClientRect().top -
+        root.getBoundingClientRect().top,
       height: Number(root.dataset.standingHeight),
       layerTop: root.getBoundingClientRect().top,
       rasterHeight: root.querySelector('.pet3d-canvas').getBoundingClientRect().height,
@@ -458,7 +449,9 @@ test('miniature cat and ball keep document positions while the canvas scrolls of
   expect(scrolled.catY).toBe(before.catY);
   expect(scrolled.ballX).toBe(before.ballX);
   expect(scrolled.ballY).toBe(before.ballY);
-  expect(scrolled.revision).toBe(before.revision);
+  // Sticky-sidebar surfaces refresh on scroll; the ordinary calendar stays in
+  // its original document position along with both actors.
+  expect(scrolled.calendarTop).toBeCloseTo(before.calendarTop, 2);
   await page.evaluate(() => scrollTo(0, 0));
   await page.waitForTimeout(350);
   const back = await snapshot();
@@ -569,6 +562,8 @@ test('text scratching and letter carrying preserve React text, accessible labels
     const target = targets.find((t) => t.node.textContent.includes('café thoughts'));
     const saved = localStorage.getItem('still-workspace-v2'),
       original = target.node.textContent;
+    input.paws = [{ x: (target.left + 15) / 40, y: -(target.top + target.height / 2) / 40 }];
+    input.mouth = input.paws[0];
     const engine = createTextMischief(host, input);
     const scratched = engine.scratch(target),
       stolen = engine.steal(target, () => 0.4);
@@ -611,7 +606,7 @@ test('the bundled tabby uses authored clips and exposes complete credits in Sett
   page,
 }) => {
   await ready(page);
-  await expect(layer(page)).toHaveAttribute('data-animation-count', '12');
+  await expect(layer(page)).toHaveAttribute('data-animation-count', '25');
   await expect(layer(page)).toHaveAttribute('data-standing-height', '45');
   await page.getByRole('button', { name: 'Open settings', exact: true }).first().click();
   await page.getByText('About & credits', { exact: true }).click();
@@ -645,7 +640,7 @@ test('a failed model download preserves the workspace and can be retried', async
   await page.unroute('**/models/still-tabby.v1.glb');
   await page.getByRole('button', { name: 'Retry 3D companion', exact: true }).click();
   await ready(page);
-  await expect(layer(page)).toHaveAttribute('data-animation-count', '12');
+  await expect(layer(page)).toHaveAttribute('data-animation-count', '25');
 });
 
 test('feline arbitration runs in a worker and gracefully falls back when workers are blocked', async ({

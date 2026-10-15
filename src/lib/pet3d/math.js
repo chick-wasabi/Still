@@ -1,3 +1,4 @@
+import { selectBehavior } from './behaviorConfig.js';
 // 9.81 m/s² at about 106 CSS pixels per metre, divided by 40 pixels/world unit.
 export const GRAVITY = 26;
 export const PET_UNIT = 40;
@@ -35,7 +36,7 @@ export function worldBounds(bounds) {
     bottom: bounds.bottom ?? -bounds.height / 2,
   };
 }
-export function clearBody(point, boxes, bounds) {
+export function clearBody(point, boxes, bounds, trajectory = null) {
   const edge = worldBounds(bounds);
   if (
     point.x - CAT.halfWidth < edge.left ||
@@ -47,6 +48,11 @@ export function clearBody(point, boxes, bounds) {
   return !boxes.some(
     (b) =>
       !b.sensor &&
+      !(
+        trajectory &&
+        b.oneWay &&
+        (trajectory.vy > 0 || trajectory.apex < b.top + CAT.halfHeight || point.y < b.top)
+      ) &&
       point.x + CAT.halfWidth > b.left + 0.015 &&
       point.x - CAT.halfWidth < b.right - 0.015 &&
       point.y + CAT.halfHeight > b.bottom + 0.015 &&
@@ -87,12 +93,16 @@ export function planLeap(from, to, boxes, bounds) {
     const velocity = launchVelocity(from, to, rise);
     if (Math.abs(velocity.x) > 13) continue;
     const count = Math.max(35, Math.ceil(velocity.time * 90));
+    const trajectory = { vy: 0, apex: from.y + rise };
     let safe = true;
     for (let i = 0; i <= count; i++) {
       const t = (i / count) * velocity.time;
       point.x = from.x + velocity.x * t;
       point.y = from.y + velocity.y * t - (GRAVITY * t * t) / 2;
-      if (!clearBody(point, local, bounds)) {
+      // One-way ledges only intercept the descending body. A cat starting below
+      // a calendar roof can jump through it and then land on its painted top.
+      trajectory.vy = velocity.y - GRAVITY * t;
+      if (!clearBody(point, local, bounds, trajectory)) {
         safe = false;
         break;
       }
@@ -115,40 +125,4 @@ export function tossVelocity(samples, maximum = 18) {
   }
   return { x, y, z: 0 };
 }
-export function behavior(
-  {
-    energy = 1,
-    previous = '',
-    cursor = false,
-    ball = true,
-    wall = false,
-    text = false,
-    recent = [],
-    arousal = 0.5,
-  },
-  random = Math.random,
-) {
-  const weights = [
-    ['idle', 1.4],
-    ['walk', 2],
-    ['explore', 4],
-    ['sit', 1.2],
-    ['groom', 1.5],
-    ['meow', 1.2],
-    ['run', 1.8 * (0.5 + arousal)],
-    ['stretch', 1.5],
-    ['roll', 1.2],
-    ['sleep', energy < 0.35 ? 5 : 0.8],
-    ['jump', 1.7],
-    ['hunt', ball ? 2.8 : 0],
-    ['stalk', cursor ? 2 : 0],
-    ['climb', wall ? 1.3 : 0],
-    ['scratch', text ? 1.6 : 0],
-    ['steal-letter', text ? 0.8 + arousal * 2 : 0],
-  ];
-  const available = weights
-    .filter(([name, weight]) => weight && name !== previous)
-    .map(([name, w]) => [name, recent.includes(name) ? w * 0.18 : w]);
-  let n = random() * available.reduce((sum, [, w]) => sum + w, 0);
-  return available.find(([, w]) => (n -= w) < 0)?.[0] || 'idle';
-}
+export const behavior = selectBehavior;

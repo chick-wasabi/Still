@@ -246,6 +246,8 @@ test('habit checks update streaks, survive editing and reload, and forbid future
 test('PIN encrypts content, locks on reload, rejects wrong PIN, changes and removes securely', async ({
   page,
 }) => {
+  // Several 600,000-round key derivations and reloads are deliberately expensive.
+  test.setTimeout(60000);
   await createNote(page, 'Secret diary');
   await settings(page);
   await page.getByLabel('Your name', { exact: true }).fill('Private Name');

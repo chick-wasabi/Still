@@ -14,6 +14,7 @@ import { Cat, CircleDot, RotateCcw } from 'lucide-react';
 import useReducedMotion from '../../hooks/useReducedMotion';
 import { observeDomWorld, observeRenderWindow } from '../../lib/pet3d/domWorld';
 import { createPetInput, restoreNativeCursor } from '../../lib/pet3d/state';
+const PetInspector = import.meta.env.DEV ? lazy(() => import('./PetInspector')) : null;
 const PetScene = lazy(() => import('./PetScene'));
 
 function supportsWebGL() {
@@ -39,7 +40,7 @@ class RenderBoundary extends Component {
     return this.state.failed ? this.props.fallback : this.props.children;
   }
 }
-function Companion({ enabled, ballEnabled, suspended, layoutKey }) {
+function Companion({ enabled, ballEnabled, soundEnabled, suspended, layoutKey }) {
   const layer = useRef(null),
     input = useMemo(createPetInput, []),
     reduced = useReducedMotion();
@@ -69,14 +70,16 @@ function Companion({ enabled, ballEnabled, suspended, layoutKey }) {
   useLayoutEffect(() => {
     input.catEnabled = enabled;
     input.ballEnabled = ballEnabled;
+    input.soundEnabled = soundEnabled;
     input.paused = paused;
     input.reduced = reduced;
     if (paused || reduced || !enabled) {
       restoreNativeCursor(input);
+      input.muteSound?.();
       input.restoreMischief?.();
     }
     return () => restoreNativeCursor(input);
-  }, [input, paused, reduced, enabled, ballEnabled]);
+  }, [input, paused, reduced, enabled, ballEnabled, soundEnabled]);
   useEffect(() => {
     const host = layer.current.closest('.pet3d-host');
     input.host = host;
@@ -176,6 +179,13 @@ function Companion({ enabled, ballEnabled, suspended, layoutKey }) {
           </RenderBoundary>
         </div>
       )}
+      {import.meta.env.DEV &&
+        new URLSearchParams(location.search).get('petDebug') === '1' &&
+        layout && (
+          <Suspense fallback={null}>
+            <PetInspector input={input} layout={layout} />
+          </Suspense>
+        )}
       <span className="pet3d-bubble" aria-hidden="true" />
       {unavailable && fallback}
       {ready && !paused && (
@@ -214,10 +224,11 @@ function Companion({ enabled, ballEnabled, suspended, layoutKey }) {
 export default memo(function PetCompanion({
   enabled = true,
   ballEnabled = false,
+  soundEnabled = false,
   suspended = false,
   layoutKey = '',
 }) {
   return enabled || ballEnabled ? (
-    <Companion {...{ enabled, ballEnabled, suspended, layoutKey }} />
+    <Companion {...{ enabled, ballEnabled, soundEnabled, suspended, layoutKey }} />
   ) : null;
 });
